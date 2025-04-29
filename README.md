@@ -53,7 +53,8 @@ optimLM/
 │   │   ├── owpy.py         # OWPy API integration
 │   │   ├── problem.py      # Problem formulation
 │   │   └── utils.py        # Utility functions
-│   └── main.py             # FastAPI application
+│   ├── main.py             # FastAPI application
+│   └── Dockerfile          # Dockerfile for the API
 ├── ui/                     # Frontend UI code
 │   ├── modules/            # Frontend modules
 │   │   ├── api_client.py   # API client
@@ -61,13 +62,12 @@ optimLM/
 │   ├── pages/              # UI pages
 │   │   ├── problem_builder.py # Problem Builder page
 │   │   └── chat_interface.py # Chat Interface page
-│   └── streamlit_app.py    # Streamlit application
+│   ├── streamlit_app.py    # Streamlit application
+│   └── Dockerfile          # Dockerfile for the UI
 ├── run_api.py              # Script to run the API
 ├── run_ui.py               # Script to run the UI
 ├── system_prompt.txt       # System prompt for LLM
 ├── requirements.txt        # Project dependencies
-├── Dockerfile.api          # Dockerfile for the API
-├── Dockerfile.streamlit    # Dockerfile for the UI
 └── docker-compose.yml      # Docker Compose configuration
 ```
 

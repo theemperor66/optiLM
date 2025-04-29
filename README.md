@@ -203,14 +203,14 @@ The `test_mode` field is optional (defaults to false) and can be used to generat
 2. Create a `.env` file with your API keys (see API Integrations section below)
 3. Build and start the containers:
    ```
-   docker-compose up -d
+   docker-compose --env-file .env up -d
    ```
 4. The API will be available at http://localhost:8000
 5. The Streamlit UI will be available at http://localhost:8501
 
 To stop the containers:
 ```
-docker-compose down
+docker-compose --env-file .env down
 ```
 
 ### Option 2: Manual Setup
@@ -250,10 +250,10 @@ This project integrates with two APIs:
 ### Setting Up OWPy API
 
 1. Obtain an API key for the OWPy optimization service
-2. Add the API URL and key to the `.env` file:
+2. Add the API URL and authentication credentials to the `.env` file:
    ```
    OWPY_API_URL=https://api.optware.com/owpy
-   OWPY_API_KEY=your_actual_owpy_api_key_here
+   OWPY_AUTH_CREDENTIALS=your_actual_owpy_credentials_here
    ```
 
 ### Installing Dependencies
@@ -277,7 +277,7 @@ pip install -r requirements.txt
 
 3. **API Integration with OWPy**:
    - The formatted problem is sent to the OWPy API's `/api/v1/solve/` endpoint.
-   - Authentication is handled using the API key provided in the `.env` file.
+   - Authentication is handled using the authentication credentials provided in the `.env` file.
    - The API solves the problem and returns a solution with makespan and job assignments.
 
 4. **Response Processing**:
@@ -348,7 +348,7 @@ The system includes a test mode that allows you to test the UI and API without m
 4. **Visualization**: All visualization features work with the randomly generated solutions
 
 Test mode is useful for:
-- Demonstrating the system without an OWPy API key
+- Demonstrating the system without OWPy authentication credentials
 - Testing the UI and visualization features
 - Developing and debugging without consuming API credits
 - Presenting the system in environments without internet access
@@ -372,10 +372,13 @@ When using Docker, you can configure the application using environment variables
    ```
    GOOGLE_API_KEY=your_actual_api_key_here
    OWPY_API_URL=https://api.optware.com/owpy
-   OWPY_API_KEY=your_actual_owpy_api_key_here
+   OWPY_AUTH_CREDENTIALS=your_actual_owpy_credentials_here
    ```
 
-2. The docker-compose.yml file will automatically use these variables.
+2. When running Docker Compose, use the `--env-file` flag to explicitly specify the .env file:
+   ```
+   docker-compose --env-file .env up -d
+   ```
 
 ### Docker Volumes (Optional)
 

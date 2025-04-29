@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import pages
-from .pages.problem_builder import show_problem_builder
-from .pages.chat_interface import show_chat_interface
+from pages.problem_builder import show_problem_builder
+from pages.chat_interface import show_chat_interface
 
 # Page configuration
 st.set_page_config(

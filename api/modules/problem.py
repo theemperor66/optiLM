@@ -3,7 +3,7 @@ from typing import Dict, Any
 from .models import SchedulingProblem
 from .llm import call_gemini_api
 
-def formulate_scheduling_problem(message: str, context: Dict[str, Any]) -> SchedulingProblem:
+def formulate_scheduling_problem(message: str, context: Dict[str, Any], test_mode: bool = False) -> SchedulingProblem:
     """
     Formulate a scheduling problem based on the user message using Gemini 2.5 Pro.
 
@@ -38,8 +38,8 @@ def formulate_scheduling_problem(message: str, context: Dict[str, Any]) -> Sched
         if not GOOGLE_API_KEY:
             raise ValueError("GOOGLE_API_KEY not found in environment variables")
 
-        # Call Gemini API
-        problem_json = call_gemini_api(system_prompt, message)
+        # Call Gemini API or generate mock response in test mode
+        problem_json = call_gemini_api(system_prompt, message, test_mode)
 
         # Validate the response
         required_keys = ["machines", "jobs", "rig_change_times", "solver_settings"]

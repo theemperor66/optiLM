@@ -1,11 +1,11 @@
 import streamlit as st
-from ..modules.api_client import call_chat_api
-from ..modules.visualization import visualize_problem, visualize_solution
+from modules.api_client import call_chat_api
+from modules.visualization import visualize_problem, visualize_solution
 
 def show_problem_builder(test_mode=False):
     """
     Display the Problem Builder page.
-    
+
     Args:
         test_mode (bool, optional): Whether to use test mode. Defaults to False.
     """

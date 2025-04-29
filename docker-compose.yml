@@ -10,7 +10,7 @@ services:
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OWPY_API_URL=${OWPY_API_URL}
-      - OWPY_API_KEY=${OWPY_API_KEY}
+      - OWPY_AUTH_CREDENTIALS=${OWPY_AUTH_CREDENTIALS}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
       interval: 30s
@@ -29,7 +29,7 @@ services:
       - API_URL=http://api:8000
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - OWPY_API_URL=${OWPY_API_URL}
-      - OWPY_API_KEY=${OWPY_API_KEY}
+      - OWPY_AUTH_CREDENTIALS=${OWPY_AUTH_CREDENTIALS}
     depends_on:
       - api
     restart: unless-stopped

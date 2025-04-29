@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 def visualize_problem(problem):
     """
     Visualize a scheduling problem.
-    
+
     Args:
         problem (dict): The scheduling problem to visualize
     """
@@ -59,7 +59,7 @@ def visualize_problem(problem):
 def visualize_solution(api_response):
     """
     Visualize a solution as a Gantt chart.
-    
+
     Args:
         api_response (dict): The API response containing the solution
     """
@@ -110,7 +110,22 @@ def visualize_solution(api_response):
 
             if gantt_data:
                 df = pd.DataFrame(gantt_data)
-                fig = ff.create_gantt(df, colors=['#779ECB', '#AEC6CF', '#836953', '#CFCFC4'],
+
+                # Get the number of unique resources (jobs)
+                unique_resources = df['Resource'].unique()
+                num_resources = len(unique_resources)
+
+                # Generate a color palette with enough colors for all resources
+                # Use a built-in colorscale that can be extended to any number of colors
+                import plotly.colors as pc
+                # Use a more reliable method to generate colors
+                colors = pc.qualitative.Plotly[:min(num_resources, len(pc.qualitative.Plotly))]
+                # If we need more colors than available in the palette, cycle through them
+                if num_resources > len(colors):
+                    colors = colors * (num_resources // len(colors) + 1)
+                    colors = colors[:num_resources]
+
+                fig = ff.create_gantt(df, colors=colors,
                                      index_col='Resource', show_colorbar=True, 
                                      group_tasks=True)
                 st.plotly_chart(fig, use_container_width=True)

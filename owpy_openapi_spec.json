@@ -1,0 +1,701 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/solvers/": {
+      "get": {
+        "summary": "Available Solvers",
+        "operationId": "available_solvers_api_v1_solvers__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response Available Solvers Api V1 Solvers  Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "keycloak-openid": []
+          }
+        ]
+      }
+    },
+    "/api/v1/examples/": {
+      "get": {
+        "summary": "Examples",
+        "description": "Collects all available example instances from the servers database.\n\n# Example response body\n    {\n        \"availableExamples\": [\n            \"002_002_016_000.json\",\n            \"002_006_007_004.json\",\n            ...\n        ]\n    }",
+        "operationId": "examples_api_v1_examples__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response Examples Api V1 Examples  Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "keycloak-openid": []
+          }
+        ]
+      }
+    },
+    "/api/v1/examples/{ex_name}": {
+      "get": {
+        "summary": "Example",
+        "description": "Reads chosen example from the server and sends content to client JSON",
+        "operationId": "example_api_v1_examples__ex_name__get",
+        "security": [
+          {
+            "keycloak-openid": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ex_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ex Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IOScenario"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solve/": {
+      "post": {
+        "summary": "Solve",
+        "description": "Solves a valid instance and returns the result for the chosen solver settings.",
+        "operationId": "solve_api_v1_solve__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioOptimizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SolutionAndTime"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "keycloak-openid": []
+          }
+        ]
+      }
+    },
+    "/api/v1/degenerate_b_and_b/": {
+      "post": {
+        "summary": "Solve Degenerate B And B",
+        "description": "Solves a valid instance and returns all degenerate results that lead to the best makespan.",
+        "operationId": "solve_degenerate_b_and_b_api_v1_degenerate_b_and_b__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioOptimizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DegenerateSolutionAndTime"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "keycloak-openid": []
+          }
+        ]
+      }
+    },
+    "/api/v1/batch_solve/": {
+      "post": {
+        "summary": "Batch Solve",
+        "description": "Processes all entered solve requests and returns their solutions.\nThe solve requests can have individual solver settings.",
+        "operationId": "batch_solve_api_v1_batch_solve__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchScenarioOptimizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchSolutionAndTime"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "keycloak-openid": []
+          }
+        ]
+      }
+    },
+    "/api/v1/health/live": {
+      "get": {
+        "summary": "Live",
+        "operationId": "live_api_v1_health_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "keycloak-openid": []
+          }
+        ]
+      }
+    },
+    "/api/v1/health/ready": {
+      "get": {
+        "summary": "Ready",
+        "operationId": "ready_api_v1_health_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExceptionResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "keycloak-openid": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BatchScenarioOptimizeRequest": {
+        "properties": {
+          "requestList": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioOptimizeRequest"
+            },
+            "type": "array",
+            "title": "Requestlist"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requestList"
+        ],
+        "title": "BatchScenarioOptimizeRequest"
+      },
+      "BatchSolutionAndTime": {
+        "properties": {
+          "all_solutions": {
+            "items": {
+              "$ref": "#/components/schemas/SolutionAndTime"
+            },
+            "type": "array",
+            "title": "All Solutions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "all_solutions"
+        ],
+        "title": "BatchSolutionAndTime",
+        "description": "Solution for the batch solver of the Q-Sequencer.\nIt contains the solution for each instance entered and has the same ordering as the\nrequest input."
+      },
+      "DegenerateSolutionAndTime": {
+        "properties": {
+          "makespan": {
+            "type": "integer",
+            "title": "Makespan"
+          },
+          "machines_distribution": {
+            "items": {
+              "additionalProperties": {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Machines Distribution"
+          },
+          "time_needed_in_s": {
+            "type": "integer",
+            "title": "Time Needed In S"
+          }
+        },
+        "type": "object",
+        "required": [
+          "makespan",
+          "machines_distribution",
+          "time_needed_in_s"
+        ],
+        "title": "DegenerateSolutionAndTime",
+        "description": "Solution for Q-Sequencer containing all solutions with the optimal makespan.\n`Makespan` is the maximum time the machines have for job processing and rig changes.\n`Machine Distribution` defines a list of all the processing sequences of the jobs\nper machine with the optimal makespan."
+      },
+      "ExceptionResponse": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "ExceptionResponse",
+        "description": "Schema used to describe an exception response"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "IOScenario": {
+        "properties": {
+          "Machines": {
+            "items": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Machines"
+          },
+          "Jobs": {
+            "items": {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Jobs"
+          },
+          "Rigs": {
+            "items": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Rigs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "Machines",
+          "Jobs",
+          "Rigs"
+        ],
+        "title": "IOScenario",
+        "description": "Several machines with changeable rigs should produce a given list\nof orders with minimal makespan\n\nAttributes:\n    machines: the list of machines that are available for the current shift\n    jobs: the list of jobs that should be distributed on the machines and processed with minimal makespan\n    rig_to_rig_time: the estimated time for a changing a machine from one rig to another one"
+      },
+      "ScenarioOptimizeRequest": {
+        "properties": {
+          "scenarioInput": {
+            "$ref": "#/components/schemas/IOScenario"
+          },
+          "solverFunc": {
+            "type": "string",
+            "enum": [
+              "GLOBAL",
+              "TWO_STEP",
+              "SA",
+              "BranchAndBound"
+            ],
+            "title": "Solverfunc"
+          },
+          "solver_settings": {
+            "$ref": "#/components/schemas/SolverSettings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scenarioInput",
+          "solverFunc",
+          "solver_settings"
+        ],
+        "title": "ScenarioOptimizeRequest"
+      },
+      "SolutionAndTime": {
+        "properties": {
+          "makespan": {
+            "type": "integer",
+            "title": "Makespan"
+          },
+          "machines_distribution": {
+            "additionalProperties": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Machines Distribution"
+          },
+          "time_needed_in_s": {
+            "type": "integer",
+            "title": "Time Needed In S"
+          }
+        },
+        "type": "object",
+        "required": [
+          "makespan",
+          "machines_distribution",
+          "time_needed_in_s"
+        ],
+        "title": "SolutionAndTime",
+        "description": "Solution for Q-Sequencer. `Makespan` is the maximum time the\nmachines have for job processing and rig changes. `Machine Distribution`\ndefines the processing sequence of the jobs per machine"
+      },
+      "SolverSettings": {
+        "properties": {
+          "MaxTime": {
+            "type": "integer",
+            "title": "Maxtime"
+          },
+          "UseHeuristics": {
+            "type": "boolean",
+            "title": "Useheuristics"
+          }
+        },
+        "type": "object",
+        "required": [
+          "MaxTime",
+          "UseHeuristics"
+        ],
+        "title": "SolverSettings",
+        "description": "Settings for chosen Solver Algorithm\n\nAttributes:\n    max_time: Maximum time in seconds allowed to run the solver\n    use_heuristics: Whether to use heuristic to get faster results"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "keycloak-openid": {
+        "type": "openIdConnect",
+        "openIdConnectUrl": "https://keycloak.cloud.optware.de/realms/OASIS/.well-known/openid-configuration"
+      }
+    }
+  }
+}

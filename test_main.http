@@ -1,0 +1,66 @@
+# Test your FastAPI endpoints
+
+GET http://127.0.0.1:8000/
+Accept: application/json
+
+###
+
+GET http://127.0.0.1:8000/hello/User
+Accept: application/json
+
+###
+
+# Test the chat endpoint with a general query
+POST http://127.0.0.1:8000/chat
+Content-Type: application/json
+Accept: application/json
+
+{
+  "message": "What can you help me with?"
+}
+
+###
+
+# Test the chat endpoint with a simple optimization problem
+POST http://127.0.0.1:8000/chat
+Content-Type: application/json
+Accept: application/json
+
+{
+  "message": "I want to maximize profit where profit is 3x + 4y, and I have a constraint that x + y <= 10. Both x and y are non-negative."
+}
+
+###
+
+# Test the chat endpoint with a complex query that should be referred to support
+POST http://127.0.0.1:8000/chat
+Content-Type: application/json
+Accept: application/json
+
+{
+  "message": "I need to solve a multi-objective non-linear integer programming problem with 15 variables and 20 constraints. The first objective is to maximize revenue which is calculated as the sum of the product of price and quantity for each product. The second objective is to minimize cost which includes fixed costs and variable costs. The constraints include capacity constraints, demand constraints, and budget constraints. Can you help me formulate and solve this problem?"
+}
+
+###
+
+# Test the chat endpoint with context provided
+POST http://127.0.0.1:8000/chat
+Content-Type: application/json
+Accept: application/json
+
+{
+  "message": "Solve this optimization problem",
+  "context": {
+    "variables": [
+      {"name": "x1", "type": "continuous", "lower_bound": 0},
+      {"name": "x2", "type": "continuous", "lower_bound": 0}
+    ],
+    "constraints": [
+      {"expression": "x1 + 2*x2 <= 20", "type": "inequality"},
+      {"expression": "3*x1 + x2 <= 30", "type": "inequality"}
+    ],
+    "objective": {"expression": "5*x1 + 4*x2", "type": "maximize"}
+  }
+}
+
+###

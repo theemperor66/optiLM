@@ -1,135 +1,104 @@
+from __future__ import annotations
 import streamlit as st
 import pandas as pd
-import plotly.figure_factory as ff
 import plotly.express as px
 from datetime import datetime, timedelta
+import plotly.colors as pc
 
-def visualize_problem(problem):
-    """
-    Visualize a scheduling problem.
+# ---------------------------------------------------------------------------
+def visualize_problem(problem: dict):
+    """Pretty-print a scheduling problem (machines, jobs, rigs, solver …)."""
+    st.subheader("Scheduling Problem")
 
-    Args:
-        problem (dict): The scheduling problem to visualize
-    """
-    st.subheader("Scheduling Problem Visualization")
-
-    # Display machines
-    st.write("**Machines:**")
-    if 'machines' in problem:
-        machines_df = pd.DataFrame(problem['machines'])
-        st.dataframe(machines_df)
+    # Machines ---------------------------------------------------------------
+    st.write("**Machines**")
+    if problem.get("machines"):
+        st.dataframe(pd.DataFrame(problem["machines"]))
     else:
-        st.warning("No machine information available")
+        st.warning("No machine information available.")
 
-    # Display jobs
-    st.write("**Jobs:**")
-    if 'jobs' in problem:
-        jobs_df = pd.DataFrame(problem['jobs'])
-        st.dataframe(jobs_df)
+    # Jobs -------------------------------------------------------------------
+    st.write("**Jobs**")
+    if problem.get("jobs"):
+        st.dataframe(pd.DataFrame(problem["jobs"]))
     else:
-        st.warning("No job information available")
+        st.warning("No job information available.")
 
-    # Display rig change times
-    st.write("**Rig Change Times:**")
-    if 'rig_change_times' in problem:
-        # Create a heatmap of rig change times
+    # Rig-change matrix ------------------------------------------------------
+    st.write("**Rig-change times**")
+    if problem.get("rig_change_times"):
         try:
-            rig_change_times = problem['rig_change_times']
-            fig = px.imshow(rig_change_times,
-                           labels=dict(x="To Rig", y="From Rig", color="Change Time"),
-                           x=[f"Rig {i+1}" for i in range(len(rig_change_times[0]))],
-                           y=[f"Rig {i+1}" for i in range(len(rig_change_times))],
-                           color_continuous_scale="Viridis")
-            fig.update_layout(title="Rig Change Time Matrix")
+            rct = problem["rig_change_times"]
+            fig = px.imshow(
+                rct,
+                labels=dict(x="To rig", y="From rig", color="Δ time"),
+                x=[f"Rig {i+1}" for i in range(len(rct[0]))],
+                y=[f"Rig {i+1}" for i in range(len(rct))],
+                color_continuous_scale="Viridis",
+            )
+            fig.update_layout(title="Rig change-time matrix")
             st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.write("Rig change times:")
-            st.json(problem['rig_change_times'])
-            st.warning(f"Could not create heatmap: {str(e)}")
+        except Exception as e:  # noqa
+            st.json(problem["rig_change_times"])
+            st.warning(f"Could not create heatmap: {e}")
     else:
-        st.warning("No rig change time information available")
+        st.warning("No rig change-time information available.")
 
-    # Display solver settings
-    st.write("**Solver Settings:**")
-    if 'solver_settings' in problem:
-        st.json(problem['solver_settings'])
-    else:
-        st.warning("No solver settings available")
+    # Solver settings --------------------------------------------------------
+    st.write("**Solver settings**")
+    st.json(problem.get("solver_settings", "—"))
 
-def visualize_solution(api_response):
-    """
-    Visualize a solution as a Gantt chart.
+# ---------------------------------------------------------------------------
+def visualize_solution(api_response: dict):
+    """Render the solution returned by the OWPy API."""
+    if not (api_response
+            and api_response.get("api_response", {}).get("status") == "success"):
+        st.error("No valid solution to visualise.")
+        return
 
-    Args:
-        api_response (dict): The API response containing the solution
-    """
-    if api_response and 'api_response' in api_response and api_response['api_response']['status'] == 'success':
-        solution = api_response['api_response']['solution']
+    solution = api_response["api_response"]["solution"]
 
-        st.subheader("Solution Visualization")
+    st.subheader("Solution")
+    st.write(f"**Makespan:** {solution['objective_value']} time units")
 
-        # Display makespan
-        st.write(f"**Makespan:** {solution['objective_value']} time units")
+    # -------- tabular assignment -------------------------------------------
+    assign_df = (
+        pd.DataFrame(
+            [{"Job": j, "Machine": m} for j, m in solution["variables"].items()]
+        )
+        .sort_values("Machine")
+        .reset_index(drop=True)
+    )
+    st.dataframe(assign_df)
 
-        # Display job assignments
-        st.write("**Job Assignments:**")
-        assignments_df = pd.DataFrame([
-            {"Job": job_name, "Assigned to Machine": machine_id} 
-            for job_name, machine_id in solution['variables'].items()
-        ])
-        st.dataframe(assignments_df)
+    # -------- timeline / "Gantt" chart -------------------------------------
+    st.subheader("Schedule")
 
-        # Create Gantt chart for scheduling problems
-        if 'job_' in next(iter(solution['variables']), ''):
-            st.subheader("Schedule Visualization (Gantt Chart)")
+    # group jobs by machine
+    gantt_rows = []
+    t0 = datetime.now()
+    per_job_duration = timedelta(hours=1)           # TODO: replace with real data
+    for job, machine in solution["variables"].items():
+        # Convert machine to int to ensure arithmetic operations work
+        machine_int = int(machine)
+        start = t0 + (machine_int - 1) * per_job_duration
+        finish = start + per_job_duration
+        gantt_rows.append(dict(Machine=f"Machine {machine}",
+                               Job=job, Start=start, Finish=finish))
 
-            # Organize data for Gantt chart
-            jobs_by_machine = {}
-            for job_name, machine_id in solution['variables'].items():
-                machine_id = str(machine_id)
-                if machine_id not in jobs_by_machine:
-                    jobs_by_machine[machine_id] = []
-                jobs_by_machine[machine_id].append(job_name)
+    df = pd.DataFrame(gantt_rows)
+    if df.empty:
+        st.warning("Nothing to plot.")
+        return
 
-            # Create Gantt chart data
-            gantt_data = []
-            start_time = datetime.now()
+    # colour palette that scales
+    res_uniques = df["Job"].unique()
+    palette = pc.qualitative.Plotly * ((len(res_uniques) // 10) + 1)
+    color_map = {res: palette[i] for i, res in enumerate(res_uniques)}
 
-            for machine_id, jobs in jobs_by_machine.items():
-                current_time = start_time
-                for job in jobs:
-                    # Assume each job takes 1 hour (can be adjusted based on actual data)
-                    job_duration = timedelta(hours=1)
-                    gantt_data.append(dict(
-                        Task=f"Machine {machine_id}",
-                        Start=current_time,
-                        Finish=current_time + job_duration,
-                        Resource=job
-                    ))
-                    current_time += job_duration
-
-            if gantt_data:
-                df = pd.DataFrame(gantt_data)
-
-                # Get the number of unique resources (jobs)
-                unique_resources = df['Resource'].unique()
-                num_resources = len(unique_resources)
-
-                # Generate a color palette with enough colors for all resources
-                # Use a built-in colorscale that can be extended to any number of colors
-                import plotly.colors as pc
-                # Use a more reliable method to generate colors
-                colors = pc.qualitative.Plotly[:min(num_resources, len(pc.qualitative.Plotly))]
-                # If we need more colors than available in the palette, cycle through them
-                if num_resources > len(colors):
-                    colors = colors * (num_resources // len(colors) + 1)
-                    colors = colors[:num_resources]
-
-                fig = ff.create_gantt(df, colors=colors,
-                                     index_col='Resource', show_colorbar=True, 
-                                     group_tasks=True)
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Not enough data to create a Gantt chart")
-    else:
-        st.error("No valid solution to visualize")
+    fig = px.timeline(
+        df, x_start="Start", x_end="Finish", y="Machine",
+        color="Job", color_discrete_map=color_map, hover_name="Job"
+    )
+    fig.update_yaxes(autorange="reversed")
+    st.plotly_chart(fig, use_container_width=True)

@@ -1,37 +1,41 @@
+import os, sys
+from pathlib import Path
 import streamlit as st
-import os
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# -- Bootstrapping -----------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:          # <= NEW
+    sys.path.insert(0, str(PROJECT_ROOT))      # <= NEW
+load_dotenv(PROJECT_ROOT / ".env")             # reads .env beside ui/
 
-# Import pages
-from pages.problem_builder import show_problem_builder
-from pages.chat_interface import show_chat_interface
+# -- Internal imports (keep AFTER the path tweak) ----------------------------
+from sub_pages.problem_builder import show_problem_builder
+from sub_pages.chat_interface import show_chat_interface
 
-# Page configuration
+# -- Streamlit layout --------------------------------------------------------
 st.set_page_config(
     page_title="OWPy Scheduling Assistant",
     page_icon="📊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Sidebar for navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["Scheduling Problem Builder", "Chat Interface"])
+view = st.sidebar.radio("Go to", ["Scheduling Problem Builder", "Chat Interface"])
 
-# Test mode toggle
 st.sidebar.title("Settings")
-test_mode = st.sidebar.checkbox("Test Mode (Random Solutions)", value=False, 
-                               help="When enabled, the system will generate random solutions instead of calling the OWPy API.")
+test_mode = st.sidebar.checkbox(
+    "Test Mode (Random Solutions)",
+    value=False,
+    help=("When enabled, the system will generate random solutions "
+          "instead of calling the OWPy API.")
+)
 
-# Display the selected page
-if page == "Scheduling Problem Builder":
+if view == "Scheduling Problem Builder":
     show_problem_builder(test_mode=test_mode)
-elif page == "Chat Interface":
+else:
     show_chat_interface(test_mode=test_mode)
 
-# Footer
 st.markdown("---")
-st.markdown("OWPy Scheduling Assistant | Built with Streamlit")
+st.caption("OWPy Scheduling Assistant  |  Built with Streamlit")

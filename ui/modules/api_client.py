@@ -1,33 +1,31 @@
+import os
 import requests
 import streamlit as st
-import os
+from typing import Optional, Dict, Union
 
-# API URL (configurable via environment variable)
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 
-def call_chat_api(message, context=None, test_mode=False):
+def call_chat_api(message: str,
+                  context: Optional[Dict] = None,
+                  test_mode: bool = False,
+                  timeout: float = 15.0) -> Optional[Dict]:
     """
-    Call the chat API with the given message and context.
-    
-    Args:
-        message (str): The message to send to the API
-        context (dict, optional): Additional context for the API. Defaults to None.
-        test_mode (bool, optional): Whether to use test mode. Defaults to False.
-        
-    Returns:
-        dict: The API response, or None if there was an error
+    Send *message* (and optional *context*) to the OWPy back-end.
+
+    Returns the parsed JSON on success, or *None* and shows an error
+    banner on failure.
     """
+    payload = {"message": message, "test_mode": test_mode}
+    if context is not None:
+        payload["context"] = context
+
     try:
-        payload = {
-            "message": message,
-            "test_mode": test_mode
-        }
-        if context:
-            payload["context"] = context
+        r = requests.post(f"{API_URL}/chat", json=payload, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
 
-        response = requests.post(f"{API_URL}/chat", json=payload)
-        response.raise_for_status()
-        return response.json()
+    except requests.Timeout:
+        st.error("OWPy API timed-out – try again or increase the timeout.")
     except requests.RequestException as e:
-        st.error(f"API Error: {str(e)}")
-        return None
+        st.error(f"OWPy API error: {e}")
+    return None

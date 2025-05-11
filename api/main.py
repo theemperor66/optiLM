@@ -18,7 +18,7 @@ logger = logging.getLogger("api")
 load_dotenv()
 
 # Import modules
-from .modules.models import ChatRequest, ChatResponse
+from .modules.models import ChatRequest, ChatResponse, SolverFunction
 from .modules.utils import analyze_message, generate_response, generate_general_response
 from .modules.problem import formulate_scheduling_problem
 from .modules.owpy import call_owpy_api
@@ -59,6 +59,19 @@ async def root():
 async def say_hello(name: str):
     logger.info(f"Hello endpoint called with name: {name}")
     return {"message": f"Hello {name}"}
+
+@app.get("/api/v1/solvers/")
+async def available_solvers():
+    """
+    Return the list of available solvers.
+
+    This endpoint is used by the UI to populate the solver selection dropdown.
+    """
+    logger.info("Available solvers endpoint called")
+    # Get the list of available solvers from the SolverFunction enum
+    solvers = [solver.value for solver in SolverFunction]
+    logger.debug(f"Available solvers: {solvers}")
+    return solvers
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):

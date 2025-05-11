@@ -1,7 +1,8 @@
 import os
 import requests
 import streamlit as st
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, List
+import functools
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 
@@ -29,3 +30,22 @@ def call_chat_api(message: str,
     except requests.RequestException as e:
         st.error(f"OWPy API error: {e}")
     return None
+
+@functools.lru_cache(maxsize=1)
+def get_available_solvers(timeout: float = 5.0) -> List[str]:
+    """
+    Fetch the list of available solvers from the OWPy API.
+
+    Returns a list of solver names on success, or a default list on failure.
+    Uses LRU cache to avoid repeated API calls.
+    """
+    default_solvers = ["GLOBAL", "TWO_STEP", "SA", "BranchAndBound"]
+
+    try:
+        r = requests.get(f"{API_URL}/api/v1/solvers/", timeout=timeout)
+        r.raise_for_status()
+        solvers = r.json()
+        return solvers if solvers else default_solvers
+    except (requests.RequestException, ValueError) as e:
+        st.warning(f"Could not fetch available solvers: {e}. Using default list.")
+        return default_solvers

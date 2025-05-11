@@ -15,8 +15,9 @@ def test_chat_endpoint():
 
     # Example scheduling problem description
     message = """
-    I have 2 machines and 3 jobs. Machine 1 has a processing time of 2 and Machine 2 has a processing time of 3.
-    Job 1 requires rig 1, Job 2 requires rig 2, and Job 3 requires rig 1.
+    I have 2 machines and 3 jobs. 
+    Job 1 requires rig 1 and has a processing time of 2, Job 2 requires rig 2 and has a processing time of 3, 
+    and Job 3 requires rig 1 and has a processing time of 1.
     The rig change time from rig 1 to rig 2 is 2 units, and from rig 2 to rig 1 is 1 unit.
     Use the GLOBAL solver with a maximum time of 30 seconds and enable heuristics.
     """
@@ -60,8 +61,9 @@ def test_chat_endpoint_with_test_mode():
 
     # Example scheduling problem description
     message = """
-    I have 2 machines and 3 jobs. Machine 1 has a processing time of 2 and Machine 2 has a processing time of 3.
-    Job 1 requires rig 1, Job 2 requires rig 2, and Job 3 requires rig 1.
+    I have 2 machines and 3 jobs. 
+    Job 1 requires rig 1 and has a processing time of 2, Job 2 requires rig 2 and has a processing time of 3, 
+    and Job 3 requires rig 1 and has a processing time of 1.
     The rig change time from rig 1 to rig 2 is 2 units, and from rig 2 to rig 1 is 1 unit.
     Use the GLOBAL solver with a maximum time of 30 seconds and enable heuristics.
     """

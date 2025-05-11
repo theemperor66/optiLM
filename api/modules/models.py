@@ -13,9 +13,14 @@ class ChatResponse(BaseModel):
     scheduling_problem: Optional[Dict[str, Any]] = None
     api_response: Optional[Dict[str, Any]] = None
 
+class Job(BaseModel):
+    job_id: int
+    rig_id: int
+    processing_time: int = 1
+
 class SchedulingProblem(BaseModel):
     machines: List[Dict[str, int]]
-    jobs: List[Dict[str, int]]
+    jobs: List[Job]
     rig_change_times: List[List[int]]
     solver_settings: Dict[str, Any]
 

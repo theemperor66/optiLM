@@ -59,8 +59,7 @@ def generate_mock_response(user_message: str) -> Dict[str, Any]:
         machines = []
         for i in range(1, num_machines + 1):
             machines.append({
-                "machine_id": i,
-                "processing_time": random.randint(1, 5)
+                "machine_id": i
             })
 
         # Generate jobs
@@ -68,7 +67,8 @@ def generate_mock_response(user_message: str) -> Dict[str, Any]:
         for i in range(1, num_jobs + 1):
             jobs.append({
                 "job_id": i,
-                "rig_id": random.randint(1, num_rigs)
+                "rig_id": random.randint(1, num_rigs),
+                "processing_time": random.randint(1, 5)
             })
 
         # Generate rig change times
@@ -109,8 +109,8 @@ def generate_mock_response(user_message: str) -> Dict[str, Any]:
         logger.error(traceback.format_exc())
         # Return a minimal valid response in case of error
         return {
-            "machines": [{"machine_id": 1, "processing_time": 1}],
-            "jobs": [{"job_id": 1, "rig_id": 1}],
+            "machines": [{"machine_id": 1}],
+            "jobs": [{"job_id": 1, "rig_id": 1, "processing_time": 1}],
             "rig_change_times": [[0]],
             "solver_settings": {"max_time": 60, "use_heuristics": True, "solver_function": "GLOBAL"}
         }

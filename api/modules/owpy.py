@@ -60,9 +60,12 @@ def convert_to_owpy_format(problem: SchedulingProblem) -> ScenarioOptimizeReques
             raise ValueError("No rig change times defined in the scheduling problem")
 
         # Create the scenario from our scheduling problem
+        # Clone jobs so we don't mutate original and convert to dict format
+        owpy_jobs = [j.model_dump() for j in problem.jobs]
+
         scenario = IOScenario(
             Machines=problem.machines,
-            Jobs=problem.jobs,
+            Jobs=owpy_jobs,
             Rigs=problem.rig_change_times
         )
 

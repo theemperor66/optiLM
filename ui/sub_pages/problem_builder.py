@@ -1,6 +1,6 @@
 # (imports unchanged)
 import streamlit as st
-from modules.api_client import call_chat_api
+from modules.api_client import call_chat_api, get_available_solvers
 from modules.visualization import visualize_problem, visualize_solution
 
 def show_problem_builder(test_mode: bool = False):
@@ -9,8 +9,8 @@ def show_problem_builder(test_mode: bool = False):
     # ---------------- Initialise state -------------------------------------
     ss = st.session_state                      # shorthand
 
-    ss.setdefault("machines",       [dict(machine_id=1, processing_time=1)])
-    ss.setdefault("jobs",           [dict(job_id=1, rig_id=1)])
+    ss.setdefault("machines",       [dict(machine_id=1)])
+    ss.setdefault("jobs",           [dict(job_id=1, rig_id=1, processing_time=1)])
     ss.setdefault("rig_change_times", [[0, 1], [1, 0]])
     ss.setdefault("solver_settings", dict(max_time=60,
                                           use_heuristics=True,
@@ -26,34 +26,29 @@ def show_problem_builder(test_mode: bool = False):
         # ---------- MACHINES ----------------------------------------------
         st.subheader("Machines")
         if st.button("➕ Add machine"):
-            ss.machines.append(dict(machine_id=len(ss.machines) + 1,
-                                    processing_time=1))
+            ss.machines.append(dict(machine_id=len(ss.machines) + 1))
 
         new_machines = []
         for i, m in enumerate(ss.machines):
-            c1, c2, c3 = st.columns([2, 2, 1])
+            c1, c2 = st.columns([3, 1])
             with c1:
                 mid = st.number_input("Machine ID",
                                       key=f"m_id_{i}", value=int(m["machine_id"]),
                                       min_value=1, step=1, label_visibility="collapsed")
             with c2:
-                ptime = st.number_input("Processing time",
-                                        key=f"m_pt_{i}", value=int(m["processing_time"]),
-                                        min_value=1, step=1, label_visibility="collapsed")
-            with c3:
                 if st.button("🗑", key=f"rm_m_{i}"):
                     continue
-            new_machines.append(dict(machine_id=mid, processing_time=ptime))
+            new_machines.append(dict(machine_id=mid))
         ss.machines = new_machines
 
         # ---------- JOBS ---------------------------------------------------
         st.subheader("Jobs")
         if st.button("➕ Add job"):
-            ss.jobs.append(dict(job_id=len(ss.jobs) + 1, rig_id=1))
+            ss.jobs.append(dict(job_id=len(ss.jobs) + 1, rig_id=1, processing_time=1))
 
         new_jobs = []
         for i, j in enumerate(ss.jobs):
-            c1, c2, c3 = st.columns([2, 2, 1])
+            c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
             with c1:
                 jid = st.number_input("Job ID",
                                       key=f"j_id_{i}", value=int(j["job_id"]),
@@ -63,9 +58,14 @@ def show_problem_builder(test_mode: bool = False):
                                       key=f"j_rig_{i}", value=int(j["rig_id"]),
                                       min_value=1, step=1, label_visibility="collapsed")
             with c3:
+                ptime = st.number_input("Proc. time",
+                                        key=f"j_pt_{i}", 
+                                        value=int(j.get("processing_time", 1)),
+                                        min_value=1, step=1, label_visibility="collapsed")
+            with c4:
                 if st.button("🗑", key=f"rm_j_{i}"):
                     continue
-            new_jobs.append(dict(job_id=jid, rig_id=rid))
+            new_jobs.append(dict(job_id=jid, rig_id=rid, processing_time=ptime))
         ss.jobs = new_jobs
 
         # ---------- RIG CHANGE MATRIX -------------------------------------
@@ -108,10 +108,20 @@ def show_problem_builder(test_mode: bool = False):
             heur = st.checkbox("Use heuristics",
                                value=ss.solver_settings["use_heuristics"])
         with cs3:
+            # Get available solvers from API or use cached result
+            available_solvers = get_available_solvers()
+
+            # Find the index of the current solver in the available solvers list
+            # Default to 0 (first solver) if not found
+            current_solver = ss.solver_settings["solver_function"]
+            try:
+                solver_index = available_solvers.index(current_solver)
+            except ValueError:
+                solver_index = 0
+
             func = st.selectbox("Function",
-                                ["GLOBAL", "TWO_STEP", "SA", "BranchAndBound"],
-                                index=["GLOBAL", "TWO_STEP", "SA", "BranchAndBound"]
-                                .index(ss.solver_settings["solver_function"]))
+                                available_solvers,
+                                index=solver_index)
         ss.solver_settings = dict(max_time=mt,
                                   use_heuristics=heur,
                                   solver_function=func)

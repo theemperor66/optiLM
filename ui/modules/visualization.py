@@ -13,7 +13,14 @@ def visualize_problem(problem: dict):
     # Machines ---------------------------------------------------------------
     st.write("**Machines**")
     if problem.get("machines"):
-        st.dataframe(pd.DataFrame(problem["machines"]))
+        machines_df = pd.DataFrame(problem["machines"])
+
+        # Check if any machine still has processing_time (deprecated)
+        if any("processing_time" in m for m in problem["machines"]):
+            st.warning("⚠️ Deprecated: 'processing_time' found on machines. "
+                      "Processing time should now be specified on jobs.")
+
+        st.dataframe(machines_df)
     else:
         st.warning("No machine information available.")
 
@@ -77,14 +84,41 @@ def visualize_solution(api_response: dict):
     # group jobs by machine
     gantt_rows = []
     t0 = datetime.now()
-    per_job_duration = timedelta(hours=1)           # TODO: replace with real data
-    for job, machine in solution["variables"].items():
+
+    # Get job durations from the problem if available
+    job_durations = {}
+    if api_response.get("scheduling_problem") and api_response["scheduling_problem"].get("jobs"):
+        for job in api_response["scheduling_problem"]["jobs"]:
+            job_id = f"job_{job['job_id']}"
+            job_durations[job_id] = job.get("processing_time", 1)
+
+    # Track machine start times
+    machine_start_times = {}
+
+    # Sort jobs by machine for better visualization
+    sorted_jobs = sorted(solution["variables"].items(), key=lambda x: int(x[1]))
+
+    for job, machine in sorted_jobs:
         # Convert machine to int to ensure arithmetic operations work
         machine_int = int(machine)
-        start = t0 + (machine_int - 1) * per_job_duration
-        finish = start + per_job_duration
+
+        # Get job duration (default to 1 if not found)
+        job_duration = job_durations.get(job, 1)
+        duration = timedelta(hours=job_duration)
+
+        # Calculate start time based on machine's last job end time
+        if machine not in machine_start_times:
+            machine_start_times[machine] = t0 + (machine_int - 1) * timedelta(hours=1)
+
+        start = machine_start_times[machine]
+        finish = start + duration
+
+        # Update machine's next job start time
+        machine_start_times[machine] = finish
+
         gantt_rows.append(dict(Machine=f"Machine {machine}",
-                               Job=job, Start=start, Finish=finish))
+                               Job=f"{job} ({job_duration}h)", 
+                               Start=start, Finish=finish))
 
     df = pd.DataFrame(gantt_rows)
     if df.empty:

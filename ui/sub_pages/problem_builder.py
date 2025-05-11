@@ -9,7 +9,7 @@ def show_problem_builder(test_mode: bool = False):
     # ---------------- Initialise state -------------------------------------
     ss = st.session_state                      # shorthand
 
-    ss.setdefault("machines",       [dict(machine_id=1)])
+    ss.setdefault("machines",       [dict(machine_id=1, start_rig_id=1)])
     ss.setdefault("jobs",           [dict(job_id=1, rig_id=1, processing_time=1)])
     ss.setdefault("rig_change_times", [[0, 1], [1, 0]])
     ss.setdefault("solver_settings", dict(max_time=60,
@@ -25,24 +25,51 @@ def show_problem_builder(test_mode: bool = False):
 
         # ---------- MACHINES ----------------------------------------------
         st.subheader("Machines")
+
+        # ------ header row -------------------------------------------------------
+        mh1, mh2, mh3 = st.columns([2, 2, 1])
+        mh1.markdown("**Machine ID**")
+        mh2.markdown("**Start rig**")
+        mh3.markdown(" ")
+
         if st.button("➕ Add machine"):
-            ss.machines.append(dict(machine_id=len(ss.machines) + 1))
+            ss.machines.append(dict(machine_id=len(ss.machines)+1, start_rig_id=1))
 
         new_machines = []
         for i, m in enumerate(ss.machines):
-            c1, c2 = st.columns([3, 1])
+            c1, c2, c3 = st.columns([2, 2, 1])
             with c1:
-                mid = st.number_input("Machine ID",
-                                      key=f"m_id_{i}", value=int(m["machine_id"]),
-                                      min_value=1, step=1, label_visibility="collapsed")
+                mid = st.number_input(
+                    "Machine ID",
+                    key=f"m_id_{i}",
+                    value=int(m["machine_id"]),
+                    min_value=1,
+                    step=1,
+                    help="Unique integer identifier")
             with c2:
+                srig = st.number_input(
+                    "Start rig",
+                    key=f"m_srig_{i}",
+                    value=int(m.get("start_rig_id", 1)),
+                    min_value=1,
+                    step=1,
+                    help="Rig that is mounted on this machine **before** scheduling starts")
+            with c3:
                 if st.button("🗑", key=f"rm_m_{i}"):
                     continue
-            new_machines.append(dict(machine_id=mid))
+            new_machines.append(dict(machine_id=mid, start_rig_id=srig))
         ss.machines = new_machines
 
         # ---------- JOBS ---------------------------------------------------
         st.subheader("Jobs")
+
+        # ------- header row -----------------------------------------------------
+        jh1, jh2, jh3, jh4 = st.columns([2, 2, 2, 1])
+        jh1.markdown("**Job ID**")
+        jh2.markdown("**Req. rig**")
+        jh3.markdown("**Proc. time**")
+        jh4.markdown(" ")
+
         if st.button("➕ Add job"):
             ss.jobs.append(dict(job_id=len(ss.jobs) + 1, rig_id=1, processing_time=1))
 
@@ -52,16 +79,19 @@ def show_problem_builder(test_mode: bool = False):
             with c1:
                 jid = st.number_input("Job ID",
                                       key=f"j_id_{i}", value=int(j["job_id"]),
-                                      min_value=1, step=1, label_visibility="collapsed")
+                                      min_value=1, step=1,
+                                      help="Unique integer identifier")
             with c2:
                 rid = st.number_input("Rig ID",
                                       key=f"j_rig_{i}", value=int(j["rig_id"]),
-                                      min_value=1, step=1, label_visibility="collapsed")
+                                      min_value=1, step=1,
+                                      help="Rig required for this job")
             with c3:
                 ptime = st.number_input("Proc. time",
                                         key=f"j_pt_{i}", 
                                         value=int(j.get("processing_time", 1)),
-                                        min_value=1, step=1, label_visibility="collapsed")
+                                        min_value=1, step=1,
+                                        help="Processing time in chosen time units")
             with c4:
                 if st.button("🗑", key=f"rm_j_{i}"):
                     continue

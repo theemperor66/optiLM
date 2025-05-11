@@ -97,6 +97,14 @@ def test_chat_endpoint_with_test_mode():
             # Verify that this is a random solution by checking the status and solution structure
             if result['api_response']['status'] == 'success' and 'solution' in result['api_response']:
                 print("\nTest mode is working correctly! Random solution was generated.")
+
+                # Verify that every machine has start_rig_id
+                if result.get('scheduling_problem') and result['scheduling_problem'].get('machines'):
+                    all_machines_have_start_rig = all('start_rig_id' in m for m in result['scheduling_problem']['machines'])
+                    if all_machines_have_start_rig:
+                        print("All machines have start_rig_id field ✓")
+                    else:
+                        print("ERROR: Not all machines have start_rig_id field!")
             else:
                 print("\nTest mode may not be working correctly. Check the response structure.")
         else:

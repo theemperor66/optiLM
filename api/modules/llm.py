@@ -59,7 +59,8 @@ def generate_mock_response(user_message: str) -> Dict[str, Any]:
         machines = []
         for i in range(1, num_machines + 1):
             machines.append({
-                "machine_id": i
+                "machine_id": i,
+                "start_rig_id": random.randint(1, num_rigs)
             })
 
         # Generate jobs

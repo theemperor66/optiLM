@@ -229,7 +229,7 @@ def call_owpy_api(problem: SchedulingProblem, test_mode: bool = False) -> Dict[s
             api_url,
             json=request_data,
             headers=headers,
-            timeout=60  # Add timeout to prevent hanging requests
+            timeout=120  # Add timeout to prevent hanging requests
         )
 
         # Check for errors

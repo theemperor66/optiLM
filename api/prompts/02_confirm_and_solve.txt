@@ -1,0 +1,25 @@
+# Confirm and Solve Scheduling Problem
+
+If your first character is not "{", you lose one point in the eval.
+
+Your task is to help the user build a complete scheduling problem and determine when they're ready to solve it.
+
+## Current Problem State
+{state_json}
+
+## User Message
+{user_msg}
+
+## Instructions
+1. Analyze the user message and extract any information about machines, jobs, rig change times, or solver settings.
+2. Merge this information into the current problem state.
+3. If any essential information is still missing, ask ONE specific question to gather that information.
+4. Set is_complete to true ONLY if all required fields (machines, jobs, rig_change_times, solver_settings) are present and valid.
+5. Set ready_to_solve to true ONLY if:
+   - The problem is complete (is_complete is true)
+   - AND the user has explicitly asked to solve the problem (with words like "solve", "optimize", "finish")
+
+## Output Format
+You must respond with a JSON object in the following format:
+
+OUTPUT must be JSON: { "scheduling_problem": {...}, "clarification_question": "text or null", "is_complete": true/false, "ready_to_solve": true/false }

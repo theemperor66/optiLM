@@ -9,7 +9,7 @@ API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 def call_chat_api(message: str,
                   context: Optional[Dict] = None,
                   test_mode: bool = False,
-                  timeout: float = 15.0) -> Optional[Dict]:
+                  timeout: float = 120.0) -> Optional[Dict]:
     """
     Send *message* (and optional *context*) to the OWPy back-end.
 
@@ -26,13 +26,13 @@ def call_chat_api(message: str,
         return r.json()
 
     except requests.Timeout:
-        st.error("OWPy API timed-out – try again or increase the timeout.")
+        st.error("OWPy API timed-out after 120 seconds. The server might be busy processing a complex problem. Please try again.")
     except requests.RequestException as e:
         st.error(f"OWPy API error: {e}")
     return None
 
 @functools.lru_cache(maxsize=1)
-def get_available_solvers(timeout: float = 5.0) -> List[str]:
+def get_available_solvers(timeout: float = 20.0) -> List[str]:
     """
     Fetch the list of available solvers from the OWPy API.
 

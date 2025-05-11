@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 import plotly.colors as pc
+import uuid
 
 # ---------------------------------------------------------------------------
 def visualize_problem(problem: dict):
@@ -44,7 +45,7 @@ def visualize_problem(problem: dict):
                 color_continuous_scale="Viridis",
             )
             fig.update_layout(title="Rig change-time matrix")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key=f"rig_matrix_{str(uuid.uuid4())}")
         except Exception as e:  # noqa
             st.json(problem["rig_change_times"])
             st.warning(f"Could not create heatmap: {e}")
@@ -53,7 +54,7 @@ def visualize_problem(problem: dict):
 
     # Solver settings --------------------------------------------------------
     st.write("**Solver settings**")
-    st.json(problem.get("solver_settings", "—"))
+    st.json(problem.get("solver_settings") or {})
 
 # ---------------------------------------------------------------------------
 def visualize_solution(api_response: dict):
@@ -135,4 +136,4 @@ def visualize_solution(api_response: dict):
         color="Job", color_discrete_map=color_map, hover_name="Job"
     )
     fig.update_yaxes(autorange="reversed")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"gantt_chart_{str(uuid.uuid4())}")

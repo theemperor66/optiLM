@@ -7,10 +7,18 @@ class ChatRequest(BaseModel):
     context: Optional[Dict[str, Any]] = None
     test_mode: bool = False
 
+class LLMReply(BaseModel):
+    scheduling_problem: Dict[str, Any]
+    clarification_question: Optional[str]
+    is_complete: bool
+    ready_to_solve: bool = False
+    requires_support: bool = False
+
 class ChatResponse(BaseModel):
     response: str
     requires_support: bool = False
-    scheduling_problem: Optional[Dict[str, Any]] = None
+    scheduling_problem: Dict[str, Any] = {}
+    is_problem_complete: bool = False
     api_response: Optional[Dict[str, Any]] = None
 
 class Job(BaseModel):

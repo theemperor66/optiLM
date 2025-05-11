@@ -18,9 +18,9 @@ logger = logging.getLogger("api")
 load_dotenv()
 
 # Import modules
-from .modules.models import ChatRequest, ChatResponse, SolverFunction
+from .modules.models import ChatRequest, ChatResponse, SolverFunction, SchedulingProblem
 from .modules.utils import analyze_message, generate_response, generate_general_response
-from .modules.problem import formulate_scheduling_problem
+from .modules.problem import formulate_scheduling_problem, interactive_step
 from .modules.owpy import call_owpy_api
 
 # Create FastAPI app
@@ -79,19 +79,19 @@ async def chat(request: ChatRequest):
     Process a chat message from the user and provide a response.
 
     The chatbot will:
-    1. Analyze the user's message
-    2. Attempt to formulate an optimization problem if applicable
-    3. Make API calls to OWPy if a valid problem is formulated
+    1. Process the user's message in the context of the current problem state
+    2. Ask for missing information if needed
+    3. Make API calls to OWPy when the problem is complete and the user asks to solve it
     4. Refer to support team if the query is too complex
     """
     request_id = str(uuid.uuid4())
     user_message = request.message
-    context = request.context or {}
+    state_in = request.context or {}
     test_mode = request.test_mode
 
     logger.info(f"Chat request {request_id} received: {user_message[:50]}{'...' if len(user_message) > 50 else ''}")
     logger.debug(f"Full message: {user_message}")
-    logger.debug(f"Context: {context}")
+    logger.debug(f"Context: {state_in}")
     logger.debug(f"Test mode: {test_mode}")
 
     # Check if Google API key is set
@@ -102,69 +102,66 @@ async def chat(request: ChatRequest):
             requires_support=True
         )
 
-    # Process the user message to understand the intent
+    # Quick reset
+    if user_message.strip().lower() in {"reset", "start over", "new problem"}:
+        logger.info(f"User requested reset for request {request_id}")
+        return ChatResponse(
+            response="Got it – starting a fresh problem. Tell me about your machines.",
+            scheduling_problem={}
+        )
+
+    # Check if the user wants to solve the problem
+    confirm = any(w in user_message.lower() for w in ["solve", "optimize", "finish"])
+
+    # Process the user message with the interactive builder
     try:
-        intent, complexity = analyze_message(user_message)
-        logger.info(f"Message analysis for {request_id}: intent={intent}, complexity={complexity}")
+        llm = interactive_step(user_message, state_in, confirm, test_mode)
+        logger.info(f"Interactive step completed for request {request_id}, is_complete={llm.is_complete}, ready_to_solve={llm.ready_to_solve}")
     except Exception as e:
-        logger.error(f"Error analyzing message: {str(e)}")
+        logger.error(f"Error in interactive step for request {request_id}: {str(e)}")
+        logger.error(traceback.format_exc())
         return ChatResponse(
-            response=f"I'm having trouble understanding your message. Error: {str(e)}",
+            response=f"I'm having trouble processing your message. Error: {str(e)}",
             requires_support=True
         )
 
-    # If the query is too complex, refer to support
-    if complexity > 7:  # On a scale of 1-10
-        logger.info(f"Query {request_id} too complex (score: {complexity}), referring to support")
-        return ChatResponse(
-            response="Your query appears to be complex. I recommend reaching out to our support team for assistance.",
-            requires_support=True
-        )
+    # Set the assistant's response text
+    assistant_text = llm.clarification_question or "Great, I have the full problem."
 
-    # If the intent is to solve a scheduling problem
-    if intent == "solve_optimization":
-        logger.info(f"Processing optimization problem for request {request_id}")
+    # If the problem is complete and the user wants to solve it, call OWPy
+    owpy_result = None
+    if llm.ready_to_solve:
         try:
-            # Formulate the scheduling problem
-            logger.debug(f"Formulating scheduling problem for request {request_id}")
-            problem = formulate_scheduling_problem(user_message, context, test_mode)
-            logger.info(f"Problem formulated successfully for request {request_id}")
+            logger.info(f"Calling OWPy API for request {request_id} (test_mode={test_mode})")
+            owpy_result = call_owpy_api(SchedulingProblem(**llm.scheduling_problem), test_mode)
 
-            # Call OWPy API or generate random solution in test mode
-            logger.debug(f"Calling OWPy API for request {request_id} (test_mode={test_mode})")
-            api_response = call_owpy_api(problem, test_mode)
-
-            if api_response.get("status") == "error":
-                logger.error(f"OWPy API error for request {request_id}: {api_response.get('error', 'Unknown error')}")
+            if owpy_result.get("status") == "error":
+                logger.error(f"OWPy API error for request {request_id}: {owpy_result.get('error', 'Unknown error')}")
                 return ChatResponse(
-                    response=generate_response(user_message, api_response),
-                    scheduling_problem=problem.dict(),
-                    api_response=api_response,
+                    response=generate_response(user_message, owpy_result),
+                    scheduling_problem=llm.scheduling_problem,
+                    is_problem_complete=False,
+                    api_response=owpy_result,
                     requires_support=True
                 )
 
             logger.info(f"OWPy API call successful for request {request_id}")
-            return ChatResponse(
-                response=generate_response(user_message, api_response),
-                scheduling_problem=problem.dict(),
-                api_response=api_response
-            )
-        except ValueError as e:
-            logger.error(f"Value error formulating problem for request {request_id}: {str(e)}")
-            return ChatResponse(
-                response=f"I couldn't formulate your scheduling problem: {str(e)}",
-                requires_support=True
-            )
+            assistant_text = generate_response(user_message, owpy_result)
         except Exception as e:
-            logger.error(f"Unexpected error processing request {request_id}: {str(e)}")
+            logger.error(f"Error calling OWPy API for request {request_id}: {str(e)}")
             logger.error(traceback.format_exc())
             return ChatResponse(
-                response=f"An error occurred while processing your request: {str(e)}. Please try again with a clearer description of your scheduling problem.",
+                response=f"An error occurred while solving your problem: {str(e)}",
+                scheduling_problem=llm.scheduling_problem,
+                is_problem_complete=False,
                 requires_support=True
             )
 
-    # For other intents, provide a general response
-    logger.info(f"Generating general response for request {request_id} with intent {intent}")
+    # Return the response
     return ChatResponse(
-        response=generate_general_response(user_message, intent)
+        response=assistant_text,
+        scheduling_problem=llm.scheduling_problem,
+        is_problem_complete=llm.ready_to_solve and owpy_result and owpy_result.get("status") == "success",
+        api_response=owpy_result,
+        requires_support=llm.requires_support
     )

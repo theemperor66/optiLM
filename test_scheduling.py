@@ -115,9 +115,96 @@ def test_chat_endpoint_with_test_mode():
         print(f"Error calling API: {str(e)}")
         return None
 
+def test_conversational_approach():
+    """Test the conversational approach with multiple messages."""
+    print("\nTesting conversational approach with multiple messages...")
+
+    # Step 1: Start with machines
+    message1 = "I have 2 machines"
+
+    try:
+        # First message - should ask about jobs
+        response1 = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message1, "test_mode": True}
+        )
+        response1.raise_for_status()
+        result1 = response1.json()
+
+        print("\nStep 1 - Machines:")
+        print(f"Response: {result1['response']}")
+        print(f"Is problem complete: {result1.get('is_problem_complete', False)}")
+        print(f"Full response: {result1}")
+
+        # Get the context from the first response
+        context1 = result1.get('scheduling_problem', {})
+
+        # Step 2: Add jobs
+        message2 = "Job 1 rig 1 time 3; Job 2 rig 2 time 4"
+
+        response2 = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message2, "context": context1, "test_mode": True}
+        )
+        response2.raise_for_status()
+        result2 = response2.json()
+
+        print("\nStep 2 - Jobs:")
+        print(f"Response: {result2['response']}")
+        print(f"Is problem complete: {result2.get('is_problem_complete', False)}")
+
+        # Get the context from the second response
+        context2 = result2.get('scheduling_problem', {})
+
+        # Step 3: Add rig matrix and max time
+        message3 = "rig matrix [[0,1],[1,0]]; max time 30"
+
+        response3 = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message3, "context": context2, "test_mode": True}
+        )
+        response3.raise_for_status()
+        result3 = response3.json()
+
+        print("\nStep 3 - Rig Matrix:")
+        print(f"Response: {result3['response']}")
+        print(f"Is problem complete: {result3.get('is_problem_complete', False)}")
+
+        # Get the context from the third response
+        context3 = result3.get('scheduling_problem', {})
+
+        # Step 4: Solve the problem
+        message4 = "solve"
+
+        response4 = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message4, "context": context3, "test_mode": True}
+        )
+        response4.raise_for_status()
+        result4 = response4.json()
+
+        print("\nStep 4 - Solve:")
+        print(f"Response: {result4['response']}")
+        print(f"Is problem complete: {result4.get('is_problem_complete', False)}")
+
+        # Check if the API was called and returned a response
+        if result4.get('api_response') and result4['api_response'].get('status') == 'success':
+            print("\nTest passed! Conversational approach is working correctly.")
+            return True
+        else:
+            print("\nTest failed! API response not received or status not success.")
+            return False
+
+    except requests.RequestException as e:
+        print(f"Error calling API: {str(e)}")
+        return False
+
 if __name__ == "__main__":
     # Test regular mode
-    test_chat_endpoint()
+    # test_chat_endpoint()
 
     # Test test mode
-    test_chat_endpoint_with_test_mode()
+    # test_chat_endpoint_with_test_mode()
+
+    # Test conversational approach
+    test_conversational_approach()

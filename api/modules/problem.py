@@ -1,7 +1,60 @@
 import os
+import json
 from typing import Dict, Any
-from .models import SchedulingProblem
-from .llm import call_gemini_api
+from .models import SchedulingProblem, LLMReply
+from .llm import call_gemini_api, call_builder, _mock_llm_reply
+
+def interactive_step(msg: str, current_state: Dict, confirm: bool, test_mode: bool) -> LLMReply:
+    """
+    Process a user message and update the problem state interactively.
+
+    Args:
+        msg: The user message
+        current_state: The current problem state
+        confirm: Whether this is a confirmation step
+        test_mode: Whether to use mock responses
+
+    Returns:
+        LLMReply: The response from the LLM
+    """
+    print(f"interactive_step called with test_mode={test_mode}, confirm={confirm}, msg={msg[:50]}")
+    if test_mode:
+        print("Using mock LLM reply")
+        mock_reply = _mock_llm_reply(msg, current_state, confirm)
+        print(f"Mock reply: {mock_reply.clarification_question}, is_complete={mock_reply.is_complete}, ready_to_solve={mock_reply.ready_to_solve}")
+        return mock_reply
+
+    # Check if the problem state is too large
+    if current_state and len(json.dumps(current_state)) > 5000:
+        return LLMReply(
+            scheduling_problem=current_state,
+            clarification_question="Your problem is getting quite complex. Could you simplify it or focus on the essential parts?",
+            is_complete=False,
+            ready_to_solve=False
+        )
+
+    # Get the last two clarification questions from the state
+    last_questions = current_state.get("_last_questions", [])
+
+    # Call the builder
+    llm_reply = call_builder(msg, current_state, confirm)
+
+    # Check for repeated question loop
+    if llm_reply.clarification_question:
+        if len(last_questions) >= 2 and llm_reply.clarification_question == last_questions[-1]:
+            # We're in a loop, ask for support
+            llm_reply.clarification_question = "I seem to be having trouble understanding. Could you try rephrasing your request, or would you like to speak with our support team?"
+            llm_reply.requires_support = True
+
+        # Update the last questions in the state
+        last_questions.append(llm_reply.clarification_question)
+        if len(last_questions) > 2:
+            last_questions.pop(0)
+
+        # Store the last questions in the state
+        llm_reply.scheduling_problem["_last_questions"] = last_questions
+
+    return llm_reply
 
 def formulate_scheduling_problem(message: str, context: Dict[str, Any], test_mode: bool = False) -> SchedulingProblem:
     """

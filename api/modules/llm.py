@@ -8,6 +8,7 @@ import time
 import traceback
 from typing import Dict, Any, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from .models import LLMReply
 
 # Configure logging
 logger = logging.getLogger("api.llm")
@@ -19,6 +20,176 @@ if GOOGLE_API_KEY:
     logger.info("Google Generative AI configured with API key")
 else:
     logger.warning("GOOGLE_API_KEY not found in environment variables")
+
+def load_prompt(filename: str) -> str:
+    """
+    Load a prompt template from the prompts directory.
+
+    Args:
+        filename: The name of the prompt file to load
+
+    Returns:
+        str: The content of the prompt file
+    """
+    try:
+        prompt_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", filename)
+        with open(prompt_path, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.error(f"Prompt file {filename} not found")
+        raise ValueError(f"Prompt file {filename} not found")
+
+def call_builder(user_msg: str, state: Dict, confirm=False) -> LLMReply:
+    """
+    Call the interactive builder to process a user message and update the problem state.
+
+    Args:
+        user_msg: The user message
+        state: The current problem state
+        confirm: Whether to use the confirm and solve prompt
+
+    Returns:
+        LLMReply: The response from the LLM
+    """
+    tmpl = "02_confirm_and_solve.txt" if confirm else "01_interactive_builder.txt"
+
+    # Load prompt templates
+    header_prompt = load_prompt("00_context_header.txt")
+    template_prompt = load_prompt(tmpl)
+
+    # Replace placeholders manually to avoid issues with unescaped curly braces
+    state_json_str = json.dumps(state or {}, separators=(',',':'))
+    template_prompt = template_prompt.replace("{state_json}", state_json_str)
+    template_prompt = template_prompt.replace("{user_msg}", user_msg)
+
+    prompt = header_prompt + template_prompt
+
+    try:
+        # Call Gemini API
+        raw = _call_gemini(prompt)
+
+        # Strip markdown fences if present
+        clean = re.sub(r"^\s*```json\s*|\s*```\s*$", "", raw.strip(), flags=re.I|re.S)
+
+        # Parse the response as JSON
+        return LLMReply.model_validate_json(clean)
+    except Exception as e:
+        logger.error(f"LLM error: {e}\nRaw output: {raw[:120] if 'raw' in locals() else 'No output'}")
+        return LLMReply(
+            scheduling_problem=state or {},
+            clarification_question="Sorry, I couldn't parse that. Could you rephrase?",
+            is_complete=False,
+        )
+
+def _call_gemini(prompt: str) -> str:
+    """
+    Call the Gemini API with a prompt and return the raw text response.
+
+    Args:
+        prompt: The prompt to send to the Gemini API
+
+    Returns:
+        str: The raw text response from the Gemini API
+    """
+    if not GOOGLE_API_KEY:
+        logger.error("Cannot call Gemini API: API key not configured")
+        raise ValueError("Google API key not configured. Please set the GOOGLE_API_KEY environment variable.")
+
+    request_id = f"gemini-{int(time.time())}"
+    logger.info(f"Calling Gemini API (request {request_id})")
+
+    try:
+        # Load the Gemini 2.5 Pro Experimental model
+        model = genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
+
+        # Generate response from Gemini
+        response = model.generate_content(prompt)
+
+        # Extract the text from the response
+        if not hasattr(response, 'text') or not response.text:
+            logger.error(f"Invalid response format from Gemini API for request {request_id}")
+            raise ValueError("Invalid response format from Gemini API: missing text field")
+
+        return response.text
+    except Exception as e:
+        logger.error(f"Error calling Gemini API: {str(e)}")
+        raise
+
+def _mock_llm_reply(msg: str, current_state: Dict, confirm: bool) -> LLMReply:
+    """
+    Generate a mock LLM reply for testing without calling the Gemini API.
+
+    Args:
+        msg: The user message
+        current_state: The current problem state
+        confirm: Whether this is a confirmation step
+
+    Returns:
+        LLMReply: A mock LLM reply
+    """
+    # Initialize with current state or empty dict
+    state = current_state.copy() if current_state else {}
+
+    # For testing purposes, let's create a deterministic sequence of responses
+    # based on the number of messages exchanged
+
+    # Step 1: First message about machines
+    if "machine" in msg.lower() and "machines" not in state:
+        state["machines"] = [{"machine_id": 1, "start_rig_id": 1}, {"machine_id": 2, "start_rig_id": 1}]
+        return LLMReply(
+            scheduling_problem=state,
+            clarification_question="I've added 2 machines. Can you tell me about the jobs?",
+            is_complete=False,
+            ready_to_solve=False
+        )
+
+    # Step 2: Message about jobs
+    if "job" in msg.lower() and "jobs" not in state and "machines" in state:
+        state["jobs"] = [
+            {"job_id": 1, "rig_id": 1, "processing_time": 3},
+            {"job_id": 2, "rig_id": 2, "processing_time": 4}
+        ]
+        return LLMReply(
+            scheduling_problem=state,
+            clarification_question="I've added the jobs. Can you provide the rig change times matrix?",
+            is_complete=False,
+            ready_to_solve=False
+        )
+
+    # Step 3: Message about rig matrix
+    if ("rig matrix" in msg.lower() or "change time" in msg.lower()) and "rig_change_times" not in state and "jobs" in state:
+        state["rig_change_times"] = [[0, 1], [1, 0]]
+
+        # Add solver settings
+        state["solver_settings"] = {
+            "max_time": 30,
+            "use_heuristics": True,
+            "solver_function": "GLOBAL"
+        }
+
+        return LLMReply(
+            scheduling_problem=state,
+            clarification_question="I've added the rig change times and solver settings. The problem is complete. Would you like me to solve it now?",
+            is_complete=True,
+            ready_to_solve=False
+        )
+
+    # Step 4: Solve the problem
+    if confirm and "solve" in msg.lower() and all(k in state for k in ["machines", "jobs", "rig_change_times", "solver_settings"]):
+        return LLMReply(
+            scheduling_problem=state,
+            clarification_question=None,
+            is_complete=True,
+            ready_to_solve=True
+        )
+
+    # Default response for other cases or if the sequence is broken
+    return LLMReply(
+        scheduling_problem=state,
+        clarification_question="I'm not sure what you're asking. Can you provide information about machines, jobs, or rig change times?",
+        is_complete=False,
+        ready_to_solve=False
+    )
 
 def generate_mock_response(user_message: str) -> Dict[str, Any]:
     """

@@ -58,11 +58,12 @@ def interactive_step(msg: str, current_state: Dict, confirm: bool, test_mode: bo
 
 def formulate_scheduling_problem(message: str, context: Dict[str, Any], test_mode: bool = False) -> SchedulingProblem:
     """
-    Formulate a scheduling problem based on the user message using Gemini 2.5 Pro.
+    Formulate a scheduling problem based on the user message using the selected LLM provider.
 
     Args:
         message: The user message describing the scheduling problem
         context: Additional context that may contain pre-formulated parts of the problem
+        test_mode: Whether to use mock responses
 
     Returns:
         SchedulingProblem: The formulated scheduling problem
@@ -86,19 +87,15 @@ def formulate_scheduling_problem(message: str, context: Dict[str, Any], test_mod
         except FileNotFoundError:
             raise ValueError("System prompt file not found")
 
-        # Call Gemini API to parse the message
-        GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-        if not GOOGLE_API_KEY:
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
-
-        # Call Gemini API or generate mock response in test mode
+        # Call LLM API to parse the message
+        # Call LLM API or generate mock response in test mode
         problem_json = call_gemini_api(system_prompt, message, test_mode)
 
         # Validate the response
         required_keys = ["machines", "jobs", "rig_change_times", "solver_settings"]
         if not all(key in problem_json for key in required_keys):
             missing_keys = [key for key in required_keys if key not in problem_json]
-            raise ValueError(f"Missing required keys in Gemini response: {missing_keys}")
+            raise ValueError(f"Missing required keys in LLM response: {missing_keys}")
 
         # Create and return the SchedulingProblem
         return SchedulingProblem(
@@ -109,8 +106,8 @@ def formulate_scheduling_problem(message: str, context: Dict[str, Any], test_mod
         )
 
     except Exception as e:
-        # If there's an error with Gemini, fall back to the context or default values
-        print(f"Error formulating problem with Gemini: {str(e)}")
+        # If there's an error with the LLM, fall back to the context or default values
+        print(f"Error formulating problem with LLM: {str(e)}")
 
         # Use default values for scheduling problem
         machines = context.get("machines", [

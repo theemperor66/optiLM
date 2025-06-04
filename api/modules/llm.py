@@ -1,4 +1,3 @@
-import google.generativeai as genai
 import json
 import os
 import re
@@ -9,17 +8,27 @@ import traceback
 from typing import Dict, Any, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .models import LLMReply
+from .llm_providers import get_provider, get_available_providers
 
 # Configure logging
 logger = logging.getLogger("api.llm")
 
-# Configure Google Generative AI with API key
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    logger.info("Google Generative AI configured with API key")
-else:
-    logger.warning("GOOGLE_API_KEY not found in environment variables")
+# Get the selected LLM provider
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
+logger.info(f"Using LLM provider: {LLM_PROVIDER}")
+
+# Get the available providers
+available_providers = get_available_providers()
+logger.info(f"Available LLM providers: {', '.join(available_providers)}")
+
+# Initialize the provider
+try:
+    provider = get_provider(LLM_PROVIDER)
+    logger.info(f"LLM provider '{LLM_PROVIDER}' initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize LLM provider '{LLM_PROVIDER}': {str(e)}")
+    logger.warning(f"Falling back to default provider 'gemini'")
+    provider = get_provider("gemini")
 
 def load_prompt(filename: str) -> str:
     """
@@ -83,36 +92,22 @@ def call_builder(user_msg: str, state: Dict, confirm=False) -> LLMReply:
 
 def _call_gemini(prompt: str) -> str:
     """
-    Call the Gemini API with a prompt and return the raw text response.
+    Call the selected LLM provider with a prompt and return the raw text response.
 
     Args:
-        prompt: The prompt to send to the Gemini API
+        prompt: The prompt to send to the LLM
 
     Returns:
-        str: The raw text response from the Gemini API
+        str: The raw text response from the LLM
     """
-    if not GOOGLE_API_KEY:
-        logger.error("Cannot call Gemini API: API key not configured")
-        raise ValueError("Google API key not configured. Please set the GOOGLE_API_KEY environment variable.")
-
-    request_id = f"gemini-{int(time.time())}"
-    logger.info(f"Calling Gemini API (request {request_id})")
+    request_id = f"llm-{int(time.time())}"
+    logger.info(f"Calling {LLM_PROVIDER} provider (request {request_id})")
 
     try:
-        # Load the Gemini 2.5 Pro Experimental model
-        model = genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
-
-        # Generate response from Gemini
-        response = model.generate_content(prompt)
-
-        # Extract the text from the response
-        if not hasattr(response, 'text') or not response.text:
-            logger.error(f"Invalid response format from Gemini API for request {request_id}")
-            raise ValueError("Invalid response format from Gemini API: missing text field")
-
-        return response.text
+        # Generate text using the selected provider
+        return provider.generate_text(prompt)
     except Exception as e:
-        logger.error(f"Error calling Gemini API: {str(e)}")
+        logger.error(f"Error calling {LLM_PROVIDER} provider: {str(e)}")
         raise
 
 def _mock_llm_reply(msg: str, current_state: Dict, confirm: bool) -> LLMReply:
@@ -294,7 +289,7 @@ def generate_mock_response(user_message: str) -> Dict[str, Any]:
 )
 def call_gemini_api(prompt: str, user_message: str, test_mode: bool = False) -> Dict[str, Any]:
     """
-    Call the Gemini API with the system prompt and user message.
+    Call the selected LLM provider with the system prompt and user message.
 
     This function includes retry logic for handling transient errors.
     Note: test_mode parameter is kept for compatibility but no longer affects this function.
@@ -305,91 +300,35 @@ def call_gemini_api(prompt: str, user_message: str, test_mode: bool = False) -> 
         test_mode: Deprecated parameter, kept for compatibility
 
     Returns:
-        Dict[str, Any]: The parsed JSON response from Gemini
+        Dict[str, Any]: The parsed JSON response from the LLM
 
     Raises:
         Exception: If the API call fails after retries or if the response cannot be parsed
     """
-    # test_mode is ignored as we always want to call the real Gemini API
+    # test_mode is ignored as we always want to call the real LLM API for parsing
     if test_mode:
-        logger.info("Test mode enabled, but still using real Gemini API for parsing")
+        logger.info(f"Test mode enabled, but still using real {LLM_PROVIDER} API for parsing")
 
-    # Check if API key is configured
-    if not GOOGLE_API_KEY:
-        logger.error("Cannot call Gemini API: API key not configured")
-        raise ValueError("Google API key not configured. Please set the GOOGLE_API_KEY environment variable.")
-
-    request_id = f"gemini-{int(time.time())}"
-    logger.info(f"Calling Gemini API (request {request_id})")
+    request_id = f"llm-{int(time.time())}"
+    logger.info(f"Calling {LLM_PROVIDER} API (request {request_id})")
     start_time = time.time()
 
     try:
-        # Load the Gemini 2.5 Pro Experimental model
-        logger.debug(f"Loading Gemini model for request {request_id}")
-        model = genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
+        # Generate and parse JSON using the selected provider
+        parsed_response = provider.generate_json(prompt, user_message)
 
-        # Combine system prompt and user message
-        full_prompt = f"{prompt}\n\nUser query: {user_message}"
-        logger.debug(f"Prompt length for request {request_id}: {len(full_prompt)} characters")
+        # Validate the response structure
+        validate_response_structure(parsed_response)
 
-        # Generate response from Gemini
-        logger.debug(f"Sending request {request_id} to Gemini API")
-        response = model.generate_content(full_prompt)
-
-        # Extract the text from the response
-        if not hasattr(response, 'text') or not response.text:
-            logger.error(f"Invalid response format from Gemini API for request {request_id}")
-            raise ValueError("Invalid response format from Gemini API: missing text field")
-
-        response_text = response.text
-        logger.debug(f"Received response for request {request_id}, length: {len(response_text)} characters")
-
-        # Parse the JSON response
-        try:
-            # Try to parse the response as JSON
-            logger.debug(f"Attempting to parse response as JSON for request {request_id}")
-            parsed_response = json.loads(response_text)
-
-            # Validate the response structure
-            validate_response_structure(parsed_response)
-
-            process_time = time.time() - start_time
-            logger.info(f"Successfully processed Gemini API response for request {request_id} in {process_time:.3f}s")
-            return parsed_response
-
-        except json.JSONDecodeError as e:
-            logger.warning(f"JSON decode error for request {request_id}: {str(e)}")
-            logger.debug(f"Raw response: {response_text[:500]}...")
-
-            # If the response is not valid JSON, try to extract JSON from the text
-            # This handles cases where the model might add explanatory text
-            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-            if json_match:
-                logger.info(f"Found JSON in code block for request {request_id}")
-                extracted_json = json_match.group(1)
-                parsed_response = json.loads(extracted_json)
-
-                # Validate the response structure
-                validate_response_structure(parsed_response)
-
-                process_time = time.time() - start_time
-                logger.info(f"Successfully extracted and parsed JSON from Gemini API response for request {request_id} in {process_time:.3f}s")
-                return parsed_response
-            else:
-                logger.error(f"Could not find JSON in response for request {request_id}")
-                logger.debug(f"Response text: {response_text[:500]}...")
-                raise ValueError(f"Could not parse JSON from Gemini response. The model returned: {response_text[:100]}...")
+        process_time = time.time() - start_time
+        logger.info(f"Successfully processed {LLM_PROVIDER} API response for request {request_id} in {process_time:.3f}s")
+        return parsed_response
 
     except Exception as e:
         process_time = time.time() - start_time
-        # Check if this is a Gemini API error by examining the exception message or class
-        if "genai" in str(e.__class__).lower() or "google" in str(e.__class__).lower():
-            logger.error(f"Gemini API generation error for request {request_id} after {process_time:.3f}s: {str(e)}")
-            raise ValueError(f"Gemini API generation error: {str(e)}. Please try again with a different query.")
-        else:
-            logger.error(f"Unexpected error calling Gemini API for request {request_id} after {process_time:.3f}s: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise Exception(f"Error calling Gemini API: {str(e)}. Please check your query and try again.")
+        logger.error(f"Error calling {LLM_PROVIDER} API for request {request_id} after {process_time:.3f}s: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise Exception(f"Error calling {LLM_PROVIDER} API: {str(e)}. Please check your query and try again.")
 
 def validate_response_structure(response: Dict[str, Any]) -> None:
     """

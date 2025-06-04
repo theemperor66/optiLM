@@ -31,6 +31,7 @@ class SchedulingProblem(BaseModel):
     jobs: List[Job]
     rig_change_times: List[List[int]]
     solver_settings: Dict[str, Any]
+    timeunit: Optional[str] = "minutes"
 
 # OWPy API Models based on OpenAPI spec
 class SolverFunction(str, Enum):

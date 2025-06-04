@@ -16,15 +16,72 @@ def show_chat_interface(test_mode: bool = False):
 
     with st.expander("What can I ask?", expanded=False):
         st.markdown("""
+### Basic Commands
 1. *Describe a problem* – "There are 3 machines and 5 jobs …"
 2. *Add more details* – "Job 1 takes 3 minutes on rig 2"
 3. *Ask for a solution* – "Solve this problem"
 4. *Start over* – "Reset" or "Start over"
+
+### Key Terms Explained
+- **Machine**: A resource that processes jobs (e.g., an oven, a printer, a production line)
+- **Job**: A task that needs to be scheduled (e.g., baking a cake, printing a document)
+- **Rig**: A configuration or setup of a machine (e.g., temperature setting, tool attachment)
+- **Rig Change Time**: Time required to switch from one rig to another
+- **Processing Time**: Time required to complete a job
+
+### Sample Dialogue
+**User**: "I have a bakery with 2 ovens and need to bake 5 different items."
+
+**Assistant**: "I've added 2 machines. Can you tell me about the jobs?"
+
+**User**: "I need to bake bread at 350°F for 30 minutes, cookies at 375°F for 12 minutes, and a cake at 325°F for 45 minutes."
+
+**Assistant**: "I've added those jobs. Can you tell me how long it takes to change the oven temperature?"
+
+**User**: "It takes about 5 minutes to change the temperature by 25 degrees."
+
+**Assistant**: "Thanks! I've added the rig change times. Would you like me to solve this scheduling problem now?"
 """)
 
     # -------- Session state -------------------------------------------------
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
+
+    # TODO: Future Enhancement - Example Library
+    # This is where an example library could be implemented in the future.
+    # The library would include pre-built examples for common scheduling scenarios:
+    # - Manufacturing examples (machines with different tools/rigs)
+    # - Service industry examples (staff scheduling)
+    # - Food production examples (bakery, restaurant kitchen)
+    # Each example would have a button to load it into the chat interface.
+
+    # TODO: Future Enhancement - Guided Problem Creation
+    # Implement a wizard-style interface for step-by-step problem creation:
+    # 1. Add structured forms as an alternative to free-text input
+    # 2. Create a multi-step wizard with separate sections for:
+    #    - Defining machines
+    #    - Adding jobs
+    #    - Specifying rig change times
+    #    - Setting solver parameters
+    # 3. Provide templates for common scheduling scenarios
+    # 4. Add visual cues about what information is still needed
+    # 5. Show progress indicators for problem completion
+
+    # TODO: Future Enhancement - Long-term Improvements
+    # 1. Interactive Tutorial:
+    #    - Create a guided walkthrough for first-time users
+    #    - Include interactive exercises to practice building problems
+    #    - Provide feedback and hints during the tutorial
+    #
+    # 2. "Learn by Example" Mode:
+    #    - Show both natural language descriptions and resulting JSON structures
+    #    - Demonstrate how changes to descriptions affect problem formulation
+    #    - Allow users to experiment with modifications to examples
+    #
+    # 3. Progressive Complexity:
+    #    - Allow users to specify their expertise level
+    #    - Adjust UI complexity and explanations based on user level
+    #    - Gradually introduce advanced features as users become more comfortable
 
     # -------- Sidebar -------------------------------------------------------
     if st.sidebar.button("🗑 Reset problem", key="reset_problem"):
@@ -33,15 +90,16 @@ def show_chat_interface(test_mode: bool = False):
             api_reply = call_chat_api("reset", test_mode=test_mode)
 
         if api_reply is not None:
-            st.session_state.chat_history.append({
+            # Clear the chat history before adding the new message
+            st.session_state.chat_history = [{
                 "role": "assistant",
                 "content": api_reply["response"],
                 "problem": api_reply.get("scheduling_problem"),
                 "solution": None,
                 "is_problem_complete": False
-            })
+            }]
 
-        st.experimental_rerun()
+        st.rerun()
 
     # -------- Render history ------------------------------------------------
     for msg in st.session_state.chat_history:

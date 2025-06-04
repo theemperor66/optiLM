@@ -8,7 +8,7 @@ The scheduling problem has the following structure:
 
 SCHEMA (all ints):
 
-{ "machines":[{"machine_id":1,"start_rig_id":1}],  // no processing_time here
+{ "machines":[{"machine_id":1,"start_rig_id":1}],  // start_rig_id=1 represents room temperature (initial state)
   "jobs":[{"job_id":1,"rig_id":1,"processing_time":1}], "rig_change_times":[[0,1,2],[1,0,2],[2,2,0]], "solver_settings":{"max_time":60,"use_heuristics":true,"solver_function":"GLOBAL"} }
 
 ## Rules:

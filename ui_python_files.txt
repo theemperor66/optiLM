@@ -1,0 +1,2095 @@
+./ui/streamlit_app.py
+import os, sys
+from pathlib import Path
+import streamlit as st
+from dotenv import load_dotenv
+
+# -- Bootstrapping -----------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:          # <= NEW
+    sys.path.insert(0, str(PROJECT_ROOT))      # <= NEW
+load_dotenv(PROJECT_ROOT / ".env")             # reads .env beside ui/
+
+# -- Internal imports (keep AFTER the path tweak) ----------------------------
+from sub_pages.problem_builder import show_problem_builder
+from sub_pages.chat_interface import show_chat_interface
+
+# -- Streamlit layout --------------------------------------------------------
+st.set_page_config(
+    page_title="OWPy Scheduling Assistant",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.sidebar.title("Navigation")
+view = st.sidebar.radio("Go to", ["Scheduling Problem Builder", "Chat Interface"])
+
+st.sidebar.title("Settings")
+test_mode = st.sidebar.checkbox(
+    "Test Mode (Random Solutions)",
+    value=False,
+    help=("When enabled, the system will generate random solutions "
+          "instead of calling the OWPy API.")
+)
+
+if view == "Scheduling Problem Builder":
+    show_problem_builder(test_mode=test_mode)
+else:
+    show_chat_interface(test_mode=test_mode)
+
+st.markdown("---")
+st.caption("OWPy Scheduling Assistant  |  Built with Streamlit")
+./ui/sub_pages/chat_interface.py
+import streamlit as st
+from modules.api_client import call_chat_api
+from modules.visualization import visualize_problem, visualize_solution
+from typing import Dict, Optional
+
+def last_state(hist):
+    """Get the last scheduling problem state from the chat history."""
+    for m in reversed(hist):
+        if m["role"] == "assistant" and m.get("problem"):
+            return m["problem"]
+    return None
+
+def show_chat_interface(test_mode: bool = False):
+
+    st.title("Scheduling Chat Assistant")
+
+    with st.expander("What can I ask?", expanded=False):
+        st.markdown("""
+1. *Describe a problem* – "There are 3 machines and 5 jobs …"
+2. *Add more details* – "Job 1 takes 3 minutes on rig 2"
+3. *Ask for a solution* – "Solve this problem"
+4. *Start over* – "Reset" or "Start over"
+""")
+
+    # -------- Session state -------------------------------------------------
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # -------- Sidebar -------------------------------------------------------
+    if st.sidebar.button("🗑 Reset problem", key="reset_problem"):
+        # Send a reset message to the API
+        with st.spinner("Resetting..."):
+            api_reply = call_chat_api("reset", test_mode=test_mode)
+
+        if api_reply is not None:
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": api_reply["response"],
+                "problem": api_reply.get("scheduling_problem"),
+                "solution": None,
+                "is_problem_complete": False
+            })
+
+        st.experimental_rerun()
+
+    # -------- Render history ------------------------------------------------
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+            if msg.get("problem"):
+                # Add a badge if the problem is partial
+                if msg.get("is_problem_complete") is False:
+                    st.caption("🧩 partial problem")
+                visualize_problem(msg["problem"])
+            if msg.get("solution"):
+                visualize_solution(msg["solution"])
+
+    # -------- User input ----------------------------------------------------
+    # Get the last problem state from the chat history
+    context = last_state(st.session_state.chat_history)
+
+    # Set the placeholder text based on whether we have a context
+    placeholder = "Answer the assistant's question…" if context else "Describe your scheduling problem…"
+
+    user_input = st.chat_input(placeholder)
+    if not user_input:
+        return
+
+    st.session_state.chat_history.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.write(user_input)
+
+    with st.spinner("Thinking…"):
+        api_reply = call_chat_api(user_input, context=context, test_mode=test_mode)
+
+    if api_reply is None:
+        err = "⚠️ Couldn't reach the scheduler – please try again."
+        st.session_state.chat_history.append({"role": "assistant", "content": err})
+        with st.chat_message("assistant"):
+            st.error(err)
+        return
+
+    # -------- Show assistant answer ----------------------------------------
+    with st.chat_message("assistant"):
+        st.write(api_reply["response"])
+        if api_reply.get("scheduling_problem"):
+            # Add a badge if the problem is partial
+            if api_reply.get("is_problem_complete") is False:
+                st.caption("🧩 partial problem")
+            visualize_problem(api_reply["scheduling_problem"])
+        if api_reply.get("api_response", {}).get("status") == "success":
+            visualize_solution(api_reply)
+
+    st.session_state.chat_history.append(
+        {
+            "role": "assistant",
+            "content": api_reply["response"],
+            "problem": api_reply.get("scheduling_problem"),
+            "solution": api_reply
+            if api_reply.get("api_response", {}).get("status") == "success"
+            else None,
+            "is_problem_complete": api_reply.get("is_problem_complete", False)
+        }
+    )
+./ui/sub_pages/problem_builder.py
+# (imports unchanged)
+import streamlit as st
+from modules.api_client import call_chat_api, get_available_solvers
+from modules.visualization import visualize_problem, visualize_solution
+
+def show_problem_builder(test_mode: bool = False):
+    st.title("Scheduling Problem Builder")
+
+    # ---------------- Initialise state -------------------------------------
+    ss = st.session_state                      # shorthand
+
+    ss.setdefault("machines",       [dict(machine_id=1, start_rig_id=1)])
+    ss.setdefault("jobs",           [dict(job_id=1, rig_id=1, processing_time=1)])
+    ss.setdefault("rig_change_times", [[0, 1], [1, 0]])
+    ss.setdefault("solver_settings", dict(max_time=60,
+                                          use_heuristics=True,
+                                          solver_function="GLOBAL"))
+    ss.setdefault("solution", None)
+
+    col1, col2 = st.columns([1, 1])
+
+    # -----------------------------------------------------------------------
+    with col1:
+        st.header("Define problem")
+
+        # ---------- MACHINES ----------------------------------------------
+        st.subheader("Machines")
+
+        # ------ header row -------------------------------------------------------
+        mh1, mh2, mh3 = st.columns([2, 2, 1])
+        mh1.markdown("**Machine ID**")
+        mh2.markdown("**Start rig**")
+        mh3.markdown(" ")
+
+        if st.button("➕ Add machine"):
+            ss.machines.append(dict(machine_id=len(ss.machines)+1, start_rig_id=1))
+
+        new_machines = []
+        for i, m in enumerate(ss.machines):
+            c1, c2, c3 = st.columns([2, 2, 1])
+            with c1:
+                mid = st.number_input(
+                    "Machine ID",
+                    key=f"m_id_{i}",
+                    value=int(m["machine_id"]),
+                    min_value=1,
+                    step=1,
+                    help="Unique integer identifier")
+            with c2:
+                srig = st.number_input(
+                    "Start rig",
+                    key=f"m_srig_{i}",
+                    value=int(m.get("start_rig_id", 1)),
+                    min_value=1,
+                    step=1,
+                    help="Rig that is mounted on this machine **before** scheduling starts")
+            with c3:
+                if st.button("🗑", key=f"rm_m_{i}"):
+                    continue
+            new_machines.append(dict(machine_id=mid, start_rig_id=srig))
+        ss.machines = new_machines
+
+        # ---------- JOBS ---------------------------------------------------
+        st.subheader("Jobs")
+
+        # ------- header row -----------------------------------------------------
+        jh1, jh2, jh3, jh4 = st.columns([2, 2, 2, 1])
+        jh1.markdown("**Job ID**")
+        jh2.markdown("**Req. rig**")
+        jh3.markdown("**Proc. time**")
+        jh4.markdown(" ")
+
+        if st.button("➕ Add job"):
+            ss.jobs.append(dict(job_id=len(ss.jobs) + 1, rig_id=1, processing_time=1))
+
+        new_jobs = []
+        for i, j in enumerate(ss.jobs):
+            c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+            with c1:
+                jid = st.number_input("Job ID",
+                                      key=f"j_id_{i}", value=int(j["job_id"]),
+                                      min_value=1, step=1,
+                                      help="Unique integer identifier")
+            with c2:
+                rid = st.number_input("Rig ID",
+                                      key=f"j_rig_{i}", value=int(j["rig_id"]),
+                                      min_value=1, step=1,
+                                      help="Rig required for this job")
+            with c3:
+                ptime = st.number_input("Proc. time",
+                                        key=f"j_pt_{i}", 
+                                        value=int(j.get("processing_time", 1)),
+                                        min_value=1, step=1,
+                                        help="Processing time in chosen time units")
+            with c4:
+                if st.button("🗑", key=f"rm_j_{i}"):
+                    continue
+            new_jobs.append(dict(job_id=jid, rig_id=rid, processing_time=ptime))
+        ss.jobs = new_jobs
+
+        # ---------- RIG CHANGE MATRIX -------------------------------------
+        st.subheader("Rig change-times")
+        rig_ids = {j["rig_id"] for j in ss.jobs}
+        n_rigs  = max(rig_ids) if rig_ids else 2
+
+        # keep matrix square & sized
+        rct = [[ss.rig_change_times[i][j] if i < len(ss.rig_change_times)
+                                         and j < len(ss.rig_change_times)
+                else (0 if i == j else 1)
+                for j in range(n_rigs)]
+                for i in range(n_rigs)]
+
+        edit_matrix = []
+        st.write("Edit matrix (rows = from, columns = to):")
+        for i in range(n_rigs):
+            cols = st.columns(n_rigs)
+            edit_row = []
+            for j in range(n_rigs):
+                with cols[j]:
+                    edit_row.append(
+                        st.number_input(
+                            label=f"{i}->{j}", key=f"rct_{i}_{j}",
+                            value=int(rct[i][j]), min_value=0, step=1,
+                            label_visibility="collapsed",
+                            help=f"Change time from rig {i+1} to {j+1}",
+                        )
+                    )
+            edit_matrix.append(edit_row)
+        ss.rig_change_times = edit_matrix   # stored only once
+
+        # ---------- SOLVER SETTINGS ----------------------------------------
+        st.subheader("Solver settings")
+        cs1, cs2, cs3 = st.columns(3)
+        with cs1:
+            mt = st.number_input("Max time (s)", min_value=1,
+                                 value=int(ss.solver_settings["max_time"]))
+        with cs2:
+            heur = st.checkbox("Use heuristics",
+                               value=ss.solver_settings["use_heuristics"])
+        with cs3:
+            # Get available solvers from API or use cached result
+            available_solvers = get_available_solvers()
+
+            # Find the index of the current solver in the available solvers list
+            # Default to 0 (first solver) if not found
+            current_solver = ss.solver_settings["solver_function"]
+            try:
+                solver_index = available_solvers.index(current_solver)
+            except ValueError:
+                solver_index = 0
+
+            func = st.selectbox("Function",
+                                available_solvers,
+                                index=solver_index)
+        ss.solver_settings = dict(max_time=mt,
+                                  use_heuristics=heur,
+                                  solver_function=func)
+
+        # ---------- SOLVE ---------------------------------------------------
+        problem = dict(machines=ss.machines,
+                       jobs=ss.jobs,
+                       rig_change_times=ss.rig_change_times,
+                       solver_settings=ss.solver_settings)
+
+        if st.button("🚀 Solve problem"):
+            with st.spinner("Contacting solver…"):
+                reply = call_chat_api("Solve this scheduling problem",
+                                      context=problem, test_mode=test_mode)
+            if reply:
+                ss.solution = reply
+                st.success("Solved!")
+            else:
+                st.error("Solver failed – see sidebar logs.")
+
+    # -----------------------------------------------------------------------
+    with col2:
+        visualize_problem(dict(machines=ss.machines, jobs=ss.jobs,
+                               rig_change_times=ss.rig_change_times,
+                               solver_settings=ss.solver_settings))
+        if ss.solution:
+            visualize_solution(ss.solution)
+./ui/modules/visualization.py
+from __future__ import annotations
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+from datetime import datetime, timedelta
+import plotly.colors as pc
+
+# ---------------------------------------------------------------------------
+def visualize_problem(problem: dict):
+    """Pretty-print a scheduling problem (machines, jobs, rigs, solver …)."""
+    st.subheader("Scheduling Problem")
+
+    # Machines ---------------------------------------------------------------
+    st.write("**Machines**")
+    if problem.get("machines"):
+        machines_df = pd.DataFrame(problem["machines"])
+
+        # Check if any machine still has processing_time (deprecated)
+        if any("processing_time" in m for m in problem["machines"]):
+            st.warning("⚠️ Deprecated: 'processing_time' found on machines. "
+                      "Processing time should now be specified on jobs.")
+
+        st.dataframe(machines_df)
+    else:
+        st.warning("No machine information available.")
+
+    # Jobs -------------------------------------------------------------------
+    st.write("**Jobs**")
+    if problem.get("jobs"):
+        st.dataframe(pd.DataFrame(problem["jobs"]))
+    else:
+        st.warning("No job information available.")
+
+    # Rig-change matrix ------------------------------------------------------
+    st.write("**Rig-change times**")
+    if problem.get("rig_change_times"):
+        try:
+            rct = problem["rig_change_times"]
+            fig = px.imshow(
+                rct,
+                labels=dict(x="To rig", y="From rig", color="Δ time"),
+                x=[f"Rig {i+1}" for i in range(len(rct[0]))],
+                y=[f"Rig {i+1}" for i in range(len(rct))],
+                color_continuous_scale="Viridis",
+            )
+            fig.update_layout(title="Rig change-time matrix")
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:  # noqa
+            st.json(problem["rig_change_times"])
+            st.warning(f"Could not create heatmap: {e}")
+    else:
+        st.warning("No rig change-time information available.")
+
+    # Solver settings --------------------------------------------------------
+    st.write("**Solver settings**")
+    st.json(problem.get("solver_settings", "—"))
+
+# ---------------------------------------------------------------------------
+def visualize_solution(api_response: dict):
+    """Render the solution returned by the OWPy API."""
+    if not (api_response
+            and api_response.get("api_response", {}).get("status") == "success"):
+        st.error("No valid solution to visualise.")
+        return
+
+    solution = api_response["api_response"]["solution"]
+
+    st.subheader("Solution")
+    st.write(f"**Makespan:** {solution['objective_value']} time units")
+
+    # -------- tabular assignment -------------------------------------------
+    assign_df = (
+        pd.DataFrame(
+            [{"Job": j, "Machine": m} for j, m in solution["variables"].items()]
+        )
+        .sort_values("Machine")
+        .reset_index(drop=True)
+    )
+    st.dataframe(assign_df)
+
+    # -------- timeline / "Gantt" chart -------------------------------------
+    st.subheader("Schedule")
+
+    # group jobs by machine
+    gantt_rows = []
+    t0 = datetime.now()
+
+    # Get job durations from the problem if available
+    job_durations = {}
+    if api_response.get("scheduling_problem") and api_response["scheduling_problem"].get("jobs"):
+        for job in api_response["scheduling_problem"]["jobs"]:
+            job_id = f"job_{job['job_id']}"
+            job_durations[job_id] = job.get("processing_time", 1)
+
+    # Track machine start times
+    machine_start_times = {}
+
+    # Sort jobs by machine for better visualization
+    sorted_jobs = sorted(solution["variables"].items(), key=lambda x: int(x[1]))
+
+    for job, machine in sorted_jobs:
+        # Convert machine to int to ensure arithmetic operations work
+        machine_int = int(machine)
+
+        # Get job duration (default to 1 if not found)
+        job_duration = job_durations.get(job, 1)
+        duration = timedelta(hours=job_duration)
+
+        # Calculate start time based on machine's last job end time
+        if machine not in machine_start_times:
+            machine_start_times[machine] = t0 + (machine_int - 1) * timedelta(hours=1)
+
+        start = machine_start_times[machine]
+        finish = start + duration
+
+        # Update machine's next job start time
+        machine_start_times[machine] = finish
+
+        gantt_rows.append(dict(Machine=f"Machine {machine}",
+                               Job=f"{job} ({job_duration}h)", 
+                               Start=start, Finish=finish))
+
+    df = pd.DataFrame(gantt_rows)
+    if df.empty:
+        st.warning("Nothing to plot.")
+        return
+
+    # colour palette that scales
+    res_uniques = df["Job"].unique()
+    palette = pc.qualitative.Plotly * ((len(res_uniques) // 10) + 1)
+    color_map = {res: palette[i] for i, res in enumerate(res_uniques)}
+
+    fig = px.timeline(
+        df, x_start="Start", x_end="Finish", y="Machine",
+        color="Job", color_discrete_map=color_map, hover_name="Job"
+    )
+    fig.update_yaxes(autorange="reversed")
+    st.plotly_chart(fig, use_container_width=True)
+./ui/modules/api_client.py
+import os
+import requests
+import streamlit as st
+from typing import Optional, Dict, Union, List
+import functools
+
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
+
+def call_chat_api(message: str,
+                  context: Optional[Dict] = None,
+                  test_mode: bool = False,
+                  timeout: float = 60.0) -> Optional[Dict]:
+    """
+    Send *message* (and optional *context*) to the OWPy back-end.
+
+    Returns the parsed JSON on success, or *None* and shows an error
+    banner on failure.
+    """
+    payload = {"message": message, "test_mode": test_mode}
+    if context is not None:
+        payload["context"] = context
+
+    try:
+        r = requests.post(f"{API_URL}/chat", json=payload, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+
+    except requests.Timeout:
+        st.error("OWPy API timed-out after 60 seconds. The server might be busy processing a complex problem. Please try again.")
+    except requests.RequestException as e:
+        st.error(f"OWPy API error: {e}")
+    return None
+
+@functools.lru_cache(maxsize=1)
+def get_available_solvers(timeout: float = 20.0) -> List[str]:
+    """
+    Fetch the list of available solvers from the OWPy API.
+
+    Returns a list of solver names on success, or a default list on failure.
+    Uses LRU cache to avoid repeated API calls.
+    """
+    default_solvers = ["GLOBAL", "TWO_STEP", "SA", "BranchAndBound"]
+
+    try:
+        r = requests.get(f"{API_URL}/api/v1/solvers/", timeout=timeout)
+        r.raise_for_status()
+        solvers = r.json()
+        return solvers if solvers else default_solvers
+    except (requests.RequestException, ValueError) as e:
+        st.warning(f"Could not fetch available solvers: {e}. Using default list.")
+        return default_solvers
+./run_api.py
+import uvicorn
+
+if __name__ == "__main__":
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)./test_scheduling.py
+import requests
+import json
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# API URL (configurable via environment variable)
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+
+def test_chat_endpoint():
+    """Test the chat endpoint with a scheduling problem."""
+    print("Testing chat endpoint with a scheduling problem...")
+
+    # Example scheduling problem description
+    message = """
+    I have 2 machines and 3 jobs. 
+    Job 1 requires rig 1 and has a processing time of 2, Job 2 requires rig 2 and has a processing time of 3, 
+    and Job 3 requires rig 1 and has a processing time of 1.
+    The rig change time from rig 1 to rig 2 is 2 units, and from rig 2 to rig 1 is 1 unit.
+    Use the GLOBAL solver with a maximum time of 30 seconds and enable heuristics.
+    """
+
+    # Call the API
+    try:
+        response = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message}
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        # Print the response
+        print("\nAPI Response:")
+        print(f"Response message: {result['response']}")
+        print(f"Requires support: {result['requires_support']}")
+
+        # Check if a scheduling problem was formulated
+        if result.get('scheduling_problem'):
+            print("\nScheduling Problem:")
+            print(json.dumps(result['scheduling_problem'], indent=2))
+        else:
+            print("\nNo scheduling problem was formulated.")
+
+        # Check if the API was called and returned a response
+        if result.get('api_response'):
+            print("\nAPI Response:")
+            print(json.dumps(result['api_response'], indent=2))
+        else:
+            print("\nNo API response was returned.")
+
+        return result
+    except requests.RequestException as e:
+        print(f"Error calling API: {str(e)}")
+        return None
+
+def test_chat_endpoint_with_test_mode():
+    """Test the chat endpoint with a scheduling problem in test mode."""
+    print("\nTesting chat endpoint with a scheduling problem in test mode...")
+
+    # Example scheduling problem description
+    message = """
+    I have 2 machines and 3 jobs. 
+    Job 1 requires rig 1 and has a processing time of 2, Job 2 requires rig 2 and has a processing time of 3, 
+    and Job 3 requires rig 1 and has a processing time of 1.
+    The rig change time from rig 1 to rig 2 is 2 units, and from rig 2 to rig 1 is 1 unit.
+    Use the GLOBAL solver with a maximum time of 30 seconds and enable heuristics.
+    """
+
+    # Call the API with test_mode=True
+    try:
+        response = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message, "test_mode": True}
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        # Print the response
+        print("\nAPI Response (Test Mode):")
+        print(f"Response message: {result['response']}")
+        print(f"Requires support: {result['requires_support']}")
+
+        # Check if a scheduling problem was formulated
+        if result.get('scheduling_problem'):
+            print("\nScheduling Problem:")
+            print(json.dumps(result['scheduling_problem'], indent=2))
+        else:
+            print("\nNo scheduling problem was formulated.")
+
+        # Check if the API was called and returned a response
+        if result.get('api_response'):
+            print("\nAPI Response (Random Solution):")
+            print(json.dumps(result['api_response'], indent=2))
+
+            # Verify that this is a random solution by checking the status and solution structure
+            if result['api_response']['status'] == 'success' and 'solution' in result['api_response']:
+                print("\nTest mode is working correctly! Random solution was generated.")
+
+                # Verify that every machine has start_rig_id
+                if result.get('scheduling_problem') and result['scheduling_problem'].get('machines'):
+                    all_machines_have_start_rig = all('start_rig_id' in m for m in result['scheduling_problem']['machines'])
+                    if all_machines_have_start_rig:
+                        print("All machines have start_rig_id field ✓")
+                    else:
+                        print("ERROR: Not all machines have start_rig_id field!")
+            else:
+                print("\nTest mode may not be working correctly. Check the response structure.")
+        else:
+            print("\nNo API response was returned.")
+
+        return result
+    except requests.RequestException as e:
+        print(f"Error calling API: {str(e)}")
+        return None
+
+def test_conversational_approach():
+    """Test the conversational approach with multiple messages."""
+    print("\nTesting conversational approach with multiple messages...")
+
+    # Step 1: Start with machines
+    message1 = "I have 2 machines"
+
+    try:
+        # First message - should ask about jobs
+        response1 = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message1, "test_mode": True}
+        )
+        response1.raise_for_status()
+        result1 = response1.json()
+
+        print("\nStep 1 - Machines:")
+        print(f"Response: {result1['response']}")
+        print(f"Is problem complete: {result1.get('is_problem_complete', False)}")
+        print(f"Full response: {result1}")
+
+        # Get the context from the first response
+        context1 = result1.get('scheduling_problem', {})
+
+        # Step 2: Add jobs
+        message2 = "Job 1 rig 1 time 3; Job 2 rig 2 time 4"
+
+        response2 = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message2, "context": context1, "test_mode": True}
+        )
+        response2.raise_for_status()
+        result2 = response2.json()
+
+        print("\nStep 2 - Jobs:")
+        print(f"Response: {result2['response']}")
+        print(f"Is problem complete: {result2.get('is_problem_complete', False)}")
+
+        # Get the context from the second response
+        context2 = result2.get('scheduling_problem', {})
+
+        # Step 3: Add rig matrix and max time
+        message3 = "rig matrix [[0,1],[1,0]]; max time 30"
+
+        response3 = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message3, "context": context2, "test_mode": True}
+        )
+        response3.raise_for_status()
+        result3 = response3.json()
+
+        print("\nStep 3 - Rig Matrix:")
+        print(f"Response: {result3['response']}")
+        print(f"Is problem complete: {result3.get('is_problem_complete', False)}")
+
+        # Get the context from the third response
+        context3 = result3.get('scheduling_problem', {})
+
+        # Step 4: Solve the problem
+        message4 = "solve"
+
+        response4 = requests.post(
+            f"{API_URL}/chat",
+            json={"message": message4, "context": context3, "test_mode": True}
+        )
+        response4.raise_for_status()
+        result4 = response4.json()
+
+        print("\nStep 4 - Solve:")
+        print(f"Response: {result4['response']}")
+        print(f"Is problem complete: {result4.get('is_problem_complete', False)}")
+
+        # Check if the API was called and returned a response
+        if result4.get('api_response') and result4['api_response'].get('status') == 'success':
+            print("\nTest passed! Conversational approach is working correctly.")
+            return True
+        else:
+            print("\nTest failed! API response not received or status not success.")
+            return False
+
+    except requests.RequestException as e:
+        print(f"Error calling API: {str(e)}")
+        return False
+
+if __name__ == "__main__":
+    # Test regular mode
+    # test_chat_endpoint()
+
+    # Test test mode
+    # test_chat_endpoint_with_test_mode()
+
+    # Test conversational approach
+    test_conversational_approach()
+./run_ui.py
+import streamlit.web.cli as stcli
+import sys
+import os
+
+if __name__ == "__main__":
+    sys.argv = ["streamlit", "run", os.path.join("ui", "streamlit_app.py")]
+    stcli.main()./api/__init__.py
+./api/main.py
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+import os
+import logging
+import time
+import traceback
+import uuid
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
+logger = logging.getLogger("api")
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Import modules
+from .modules.models import ChatRequest, ChatResponse, SolverFunction, SchedulingProblem
+from .modules.utils import analyze_message, generate_response, generate_general_response
+from .modules.problem import formulate_scheduling_problem, interactive_step
+from .modules.owpy import call_owpy_api
+
+# Create FastAPI app
+app = FastAPI(
+    title="OWPy Chatbot API",
+    description="A chatbot API that helps users with OWPy optimization library",
+    version="1.0.0"
+)
+
+# Add middleware for request logging
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    logger.info(f"Request {request_id} started: {request.method} {request.url.path}")
+    start_time = time.time()
+
+    try:
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        logger.info(f"Request {request_id} completed: {response.status_code} in {process_time:.3f}s")
+        return response
+    except Exception as e:
+        logger.error(f"Request {request_id} failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal server error: {str(e)}"}
+        )
+
+@app.get("/")
+async def root():
+    logger.info("Health check endpoint called")
+    return {"message": "OWPy Chatbot API", "status": "running"}
+
+@app.get("/hello/{name}")
+async def say_hello(name: str):
+    logger.info(f"Hello endpoint called with name: {name}")
+    return {"message": f"Hello {name}"}
+
+@app.get("/api/v1/solvers/")
+async def available_solvers():
+    """
+    Return the list of available solvers.
+
+    This endpoint is used by the UI to populate the solver selection dropdown.
+    """
+    logger.info("Available solvers endpoint called")
+    # Get the list of available solvers from the SolverFunction enum
+    solvers = [solver.value for solver in SolverFunction]
+    logger.debug(f"Available solvers: {solvers}")
+    return solvers
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    Process a chat message from the user and provide a response.
+
+    The chatbot will:
+    1. Process the user's message in the context of the current problem state
+    2. Ask for missing information if needed
+    3. Make API calls to OWPy when the problem is complete and the user asks to solve it
+    4. Refer to support team if the query is too complex
+    """
+    request_id = str(uuid.uuid4())
+    user_message = request.message
+    state_in = request.context or {}
+    test_mode = request.test_mode
+
+    logger.info(f"Chat request {request_id} received: {user_message[:50]}{'...' if len(user_message) > 50 else ''}")
+    logger.debug(f"Full message: {user_message}")
+    logger.debug(f"Context: {state_in}")
+    logger.debug(f"Test mode: {test_mode}")
+
+    # Check if Google API key is set
+    if not os.getenv("GOOGLE_API_KEY"):
+        logger.error("Google API key not configured")
+        return ChatResponse(
+            response="API key not configured. Please set the GOOGLE_API_KEY environment variable.",
+            requires_support=True
+        )
+
+    # Quick reset
+    if user_message.strip().lower() in {"reset", "start over", "new problem"}:
+        logger.info(f"User requested reset for request {request_id}")
+        return ChatResponse(
+            response="Got it – starting a fresh problem. Tell me about your machines.",
+            scheduling_problem={}
+        )
+
+    # Check if the user wants to solve the problem
+    confirm = any(w in user_message.lower() for w in ["solve", "optimize", "finish"])
+
+    # Process the user message with the interactive builder
+    try:
+        llm = interactive_step(user_message, state_in, confirm, test_mode)
+        logger.info(f"Interactive step completed for request {request_id}, is_complete={llm.is_complete}, ready_to_solve={llm.ready_to_solve}")
+    except Exception as e:
+        logger.error(f"Error in interactive step for request {request_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return ChatResponse(
+            response=f"I'm having trouble processing your message. Error: {str(e)}",
+            requires_support=True
+        )
+
+    # Set the assistant's response text
+    assistant_text = llm.clarification_question or "Great, I have the full problem."
+
+    # If the problem is complete and the user wants to solve it, call OWPy
+    owpy_result = None
+    if llm.ready_to_solve:
+        try:
+            logger.info(f"Calling OWPy API for request {request_id} (test_mode={test_mode})")
+            owpy_result = call_owpy_api(SchedulingProblem(**llm.scheduling_problem), test_mode)
+
+            if owpy_result.get("status") == "error":
+                logger.error(f"OWPy API error for request {request_id}: {owpy_result.get('error', 'Unknown error')}")
+                return ChatResponse(
+                    response=generate_response(user_message, owpy_result),
+                    scheduling_problem=llm.scheduling_problem,
+                    is_problem_complete=False,
+                    api_response=owpy_result,
+                    requires_support=True
+                )
+
+            logger.info(f"OWPy API call successful for request {request_id}")
+            assistant_text = generate_response(user_message, owpy_result)
+        except Exception as e:
+            logger.error(f"Error calling OWPy API for request {request_id}: {str(e)}")
+            logger.error(traceback.format_exc())
+            return ChatResponse(
+                response=f"An error occurred while solving your problem: {str(e)}",
+                scheduling_problem=llm.scheduling_problem,
+                is_problem_complete=False,
+                requires_support=True
+            )
+
+    # Return the response
+    return ChatResponse(
+        response=assistant_text,
+        scheduling_problem=llm.scheduling_problem,
+        is_problem_complete=llm.ready_to_solve and owpy_result and owpy_result.get("status") == "success",
+        api_response=owpy_result,
+        requires_support=llm.requires_support
+    )
+./api/modules/models.py
+from pydantic import BaseModel, Field
+from typing import Dict, Any, Optional, List
+from enum import Enum
+
+class ChatRequest(BaseModel):
+    message: str
+    context: Optional[Dict[str, Any]] = None
+    test_mode: bool = False
+
+class LLMReply(BaseModel):
+    scheduling_problem: Dict[str, Any]
+    clarification_question: Optional[str]
+    is_complete: bool
+    ready_to_solve: bool = False
+    requires_support: bool = False
+
+class ChatResponse(BaseModel):
+    response: str
+    requires_support: bool = False
+    scheduling_problem: Dict[str, Any] = {}
+    is_problem_complete: bool = False
+    api_response: Optional[Dict[str, Any]] = None
+
+class Job(BaseModel):
+    job_id: int
+    rig_id: int
+    processing_time: int = 1
+
+class SchedulingProblem(BaseModel):
+    machines: List[Dict[str, int]]
+    jobs: List[Job]
+    rig_change_times: List[List[int]]
+    solver_settings: Dict[str, Any]
+
+# OWPy API Models based on OpenAPI spec
+class SolverFunction(str, Enum):
+    GLOBAL = "GLOBAL"
+    TWO_STEP = "TWO_STEP"
+    SA = "SA"
+    BRANCH_AND_BOUND = "BranchAndBound"
+
+class SolverSettings(BaseModel):
+    MaxTime: int = Field(..., description="Maximum time in seconds allowed to run the solver")
+    UseHeuristics: bool = Field(..., description="Whether to use heuristic to get faster results")
+
+class IOScenario(BaseModel):
+    Machines: List[Dict[str, int]] = Field(..., description="The list of machines available for the current shift")
+    Jobs: List[Dict[str, int]] = Field(..., description="The list of jobs to be distributed and processed")
+    Rigs: List[List[int]] = Field(..., description="The estimated time for changing a machine from one rig to another")
+
+class ScenarioOptimizeRequest(BaseModel):
+    scenarioInput: IOScenario
+    solverFunc: SolverFunction
+    solver_settings: SolverSettings
+
+class SolutionAndTime(BaseModel):
+    makespan: int = Field(..., description="Maximum time the machines have for job processing and rig changes")
+    machines_distribution: Dict[str, List[int]] = Field(..., description="Processing sequence of jobs per machine")
+    time_needed_in_s: int = Field(..., description="Time needed to solve the problem in seconds")
+./api/modules/__init__.py
+./api/modules/llm.py
+import google.generativeai as genai
+import json
+import os
+import re
+import random
+import logging
+import time
+import traceback
+from typing import Dict, Any, Optional
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from .models import LLMReply
+
+# Configure logging
+logger = logging.getLogger("api.llm")
+
+# Configure Google Generative AI with API key
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+    logger.info("Google Generative AI configured with API key")
+else:
+    logger.warning("GOOGLE_API_KEY not found in environment variables")
+
+def load_prompt(filename: str) -> str:
+    """
+    Load a prompt template from the prompts directory.
+
+    Args:
+        filename: The name of the prompt file to load
+
+    Returns:
+        str: The content of the prompt file
+    """
+    try:
+        prompt_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", filename)
+        with open(prompt_path, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.error(f"Prompt file {filename} not found")
+        raise ValueError(f"Prompt file {filename} not found")
+
+def call_builder(user_msg: str, state: Dict, confirm=False) -> LLMReply:
+    """
+    Call the interactive builder to process a user message and update the problem state.
+
+    Args:
+        user_msg: The user message
+        state: The current problem state
+        confirm: Whether to use the confirm and solve prompt
+
+    Returns:
+        LLMReply: The response from the LLM
+    """
+    tmpl = "02_confirm_and_solve.txt" if confirm else "01_interactive_builder.txt"
+    prompt = (
+        load_prompt("00_context_header.txt") +
+        load_prompt(tmpl).format(user_msg=user_msg,
+                                state_json=json.dumps(state or {}, separators=(',',':')))
+    )
+
+    try:
+        # Call Gemini API
+        raw = _call_gemini(prompt)
+
+        # Parse the response as JSON
+        return LLMReply.model_validate_json(raw)
+    except Exception as e:
+        logger.error(f"LLM error: {e}\nRaw output: {raw[:120] if 'raw' in locals() else 'No output'}")
+        return LLMReply(
+            scheduling_problem=state or {},
+            clarification_question="Sorry, I couldn't parse that. Could you rephrase?",
+            is_complete=False,
+        )
+
+def _call_gemini(prompt: str) -> str:
+    """
+    Call the Gemini API with a prompt and return the raw text response.
+
+    Args:
+        prompt: The prompt to send to the Gemini API
+
+    Returns:
+        str: The raw text response from the Gemini API
+    """
+    if not GOOGLE_API_KEY:
+        logger.error("Cannot call Gemini API: API key not configured")
+        raise ValueError("Google API key not configured. Please set the GOOGLE_API_KEY environment variable.")
+
+    request_id = f"gemini-{int(time.time())}"
+    logger.info(f"Calling Gemini API (request {request_id})")
+
+    try:
+        # Load the Gemini 2.5 Pro Experimental model
+        model = genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
+
+        # Generate response from Gemini
+        response = model.generate_content(prompt)
+
+        # Extract the text from the response
+        if not hasattr(response, 'text') or not response.text:
+            logger.error(f"Invalid response format from Gemini API for request {request_id}")
+            raise ValueError("Invalid response format from Gemini API: missing text field")
+
+        return response.text
+    except Exception as e:
+        logger.error(f"Error calling Gemini API: {str(e)}")
+        raise
+
+def _mock_llm_reply(msg: str, current_state: Dict, confirm: bool) -> LLMReply:
+    """
+    Generate a mock LLM reply for testing without calling the Gemini API.
+
+    Args:
+        msg: The user message
+        current_state: The current problem state
+        confirm: Whether this is a confirmation step
+
+    Returns:
+        LLMReply: A mock LLM reply
+    """
+    # Initialize with current state or empty dict
+    state = current_state.copy() if current_state else {}
+
+    # For testing purposes, let's create a deterministic sequence of responses
+    # based on the number of messages exchanged
+
+    # Step 1: First message about machines
+    if "machine" in msg.lower() and "machines" not in state:
+        state["machines"] = [{"machine_id": 1, "processing_time": 1}, {"machine_id": 2, "processing_time": 1}]
+        return LLMReply(
+            scheduling_problem=state,
+            clarification_question="I've added 2 machines. Can you tell me about the jobs?",
+            is_complete=False,
+            ready_to_solve=False
+        )
+
+    # Step 2: Message about jobs
+    if "job" in msg.lower() and "jobs" not in state and "machines" in state:
+        state["jobs"] = [
+            {"job_id": 1, "rig_id": 1, "processing_time": 3},
+            {"job_id": 2, "rig_id": 2, "processing_time": 4}
+        ]
+        return LLMReply(
+            scheduling_problem=state,
+            clarification_question="I've added the jobs. Can you provide the rig change times matrix?",
+            is_complete=False,
+            ready_to_solve=False
+        )
+
+    # Step 3: Message about rig matrix
+    if ("rig matrix" in msg.lower() or "change time" in msg.lower()) and "rig_change_times" not in state and "jobs" in state:
+        state["rig_change_times"] = [[0, 1], [1, 0]]
+
+        # Add solver settings
+        state["solver_settings"] = {
+            "max_time": 30,
+            "use_heuristics": True,
+            "solver_function": "GLOBAL"
+        }
+
+        return LLMReply(
+            scheduling_problem=state,
+            clarification_question="I've added the rig change times and solver settings. The problem is complete. Would you like me to solve it now?",
+            is_complete=True,
+            ready_to_solve=False
+        )
+
+    # Step 4: Solve the problem
+    if confirm and "solve" in msg.lower() and all(k in state for k in ["machines", "jobs", "rig_change_times", "solver_settings"]):
+        return LLMReply(
+            scheduling_problem=state,
+            clarification_question=None,
+            is_complete=True,
+            ready_to_solve=True
+        )
+
+    # Default response for other cases or if the sequence is broken
+    return LLMReply(
+        scheduling_problem=state,
+        clarification_question="I'm not sure what you're asking. Can you provide information about machines, jobs, or rig change times?",
+        is_complete=False,
+        ready_to_solve=False
+    )
+
+def generate_mock_response(user_message: str) -> Dict[str, Any]:
+    """
+    Generate a mock response for testing without calling the Gemini API.
+
+    Args:
+        user_message: The user message
+
+    Returns:
+        Dict[str, Any]: A mock response that mimics the Gemini API response
+    """
+    logger.info("Generating mock response for testing")
+    start_time = time.time()
+
+    try:
+        # Default values
+        num_machines = 2
+        num_jobs = 3
+        num_rigs = 2
+
+        # Try to extract numbers from the message
+        machines_match = re.search(r'(\d+)\s*machines?', user_message.lower())
+        if machines_match:
+            num_machines = int(machines_match.group(1))
+            logger.debug(f"Extracted {num_machines} machines from message")
+
+        jobs_match = re.search(r'(\d+)\s*jobs?', user_message.lower())
+        if jobs_match:
+            num_jobs = int(jobs_match.group(1))
+            logger.debug(f"Extracted {num_jobs} jobs from message")
+
+        rigs_match = re.search(r'(\d+)\s*rigs?', user_message.lower())
+        if rigs_match:
+            num_rigs = int(rigs_match.group(1))
+            logger.debug(f"Extracted {num_rigs} rigs from message")
+
+        # Generate machines
+        machines = []
+        for i in range(1, num_machines + 1):
+            machines.append({
+                "machine_id": i,
+                "start_rig_id": random.randint(1, num_rigs)
+            })
+
+        # Generate jobs
+        jobs = []
+        for i in range(1, num_jobs + 1):
+            jobs.append({
+                "job_id": i,
+                "rig_id": random.randint(1, num_rigs),
+                "processing_time": random.randint(1, 5)
+            })
+
+        # Generate rig change times
+        rig_change_times = []
+        for i in range(num_rigs):
+            row = []
+            for j in range(num_rigs):
+                if i == j:
+                    row.append(0)  # No change time for same rig
+                else:
+                    row.append(random.randint(1, 3))  # Random change time
+            rig_change_times.append(row)
+
+        # Generate solver settings
+        solver_functions = ["GLOBAL", "TWO_STEP", "SA", "BranchAndBound"]
+        solver_settings = {
+            "max_time": 60,
+            "use_heuristics": True,
+            "solver_function": random.choice(solver_functions)
+        }
+
+        # Create the mock response
+        mock_response = {
+            "machines": machines,
+            "jobs": jobs,
+            "rig_change_times": rig_change_times,
+            "solver_settings": solver_settings
+        }
+
+        process_time = time.time() - start_time
+        logger.info(f"Mock response generated in {process_time:.3f}s")
+        logger.debug(f"Mock response: {mock_response}")
+
+        return mock_response
+
+    except Exception as e:
+        logger.error(f"Error generating mock response: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Return a minimal valid response in case of error
+        return {
+            "machines": [{"machine_id": 1}],
+            "jobs": [{"job_id": 1, "rig_id": 1, "processing_time": 1}],
+            "rig_change_times": [[0]],
+            "solver_settings": {"max_time": 60, "use_heuristics": True, "solver_function": "GLOBAL"}
+        }
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((json.JSONDecodeError, ValueError))
+)
+def call_gemini_api(prompt: str, user_message: str, test_mode: bool = False) -> Dict[str, Any]:
+    """
+    Call the Gemini API with the system prompt and user message.
+
+    This function includes retry logic for handling transient errors.
+    Note: test_mode parameter is kept for compatibility but no longer affects this function.
+
+    Args:
+        prompt: The system prompt
+        user_message: The user message
+        test_mode: Deprecated parameter, kept for compatibility
+
+    Returns:
+        Dict[str, Any]: The parsed JSON response from Gemini
+
+    Raises:
+        Exception: If the API call fails after retries or if the response cannot be parsed
+    """
+    # test_mode is ignored as we always want to call the real Gemini API
+    if test_mode:
+        logger.info("Test mode enabled, but still using real Gemini API for parsing")
+
+    # Check if API key is configured
+    if not GOOGLE_API_KEY:
+        logger.error("Cannot call Gemini API: API key not configured")
+        raise ValueError("Google API key not configured. Please set the GOOGLE_API_KEY environment variable.")
+
+    request_id = f"gemini-{int(time.time())}"
+    logger.info(f"Calling Gemini API (request {request_id})")
+    start_time = time.time()
+
+    try:
+        # Load the Gemini 2.5 Pro Experimental model
+        logger.debug(f"Loading Gemini model for request {request_id}")
+        model = genai.GenerativeModel('gemini-2.5-pro-exp-03-25')
+
+        # Combine system prompt and user message
+        full_prompt = f"{prompt}\n\nUser query: {user_message}"
+        logger.debug(f"Prompt length for request {request_id}: {len(full_prompt)} characters")
+
+        # Generate response from Gemini
+        logger.debug(f"Sending request {request_id} to Gemini API")
+        response = model.generate_content(full_prompt)
+
+        # Extract the text from the response
+        if not hasattr(response, 'text') or not response.text:
+            logger.error(f"Invalid response format from Gemini API for request {request_id}")
+            raise ValueError("Invalid response format from Gemini API: missing text field")
+
+        response_text = response.text
+        logger.debug(f"Received response for request {request_id}, length: {len(response_text)} characters")
+
+        # Parse the JSON response
+        try:
+            # Try to parse the response as JSON
+            logger.debug(f"Attempting to parse response as JSON for request {request_id}")
+            parsed_response = json.loads(response_text)
+
+            # Validate the response structure
+            validate_response_structure(parsed_response)
+
+            process_time = time.time() - start_time
+            logger.info(f"Successfully processed Gemini API response for request {request_id} in {process_time:.3f}s")
+            return parsed_response
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON decode error for request {request_id}: {str(e)}")
+            logger.debug(f"Raw response: {response_text[:500]}...")
+
+            # If the response is not valid JSON, try to extract JSON from the text
+            # This handles cases where the model might add explanatory text
+            json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+            if json_match:
+                logger.info(f"Found JSON in code block for request {request_id}")
+                extracted_json = json_match.group(1)
+                parsed_response = json.loads(extracted_json)
+
+                # Validate the response structure
+                validate_response_structure(parsed_response)
+
+                process_time = time.time() - start_time
+                logger.info(f"Successfully extracted and parsed JSON from Gemini API response for request {request_id} in {process_time:.3f}s")
+                return parsed_response
+            else:
+                logger.error(f"Could not find JSON in response for request {request_id}")
+                logger.debug(f"Response text: {response_text[:500]}...")
+                raise ValueError(f"Could not parse JSON from Gemini response. The model returned: {response_text[:100]}...")
+
+    except Exception as e:
+        process_time = time.time() - start_time
+        # Check if this is a Gemini API error by examining the exception message or class
+        if "genai" in str(e.__class__).lower() or "google" in str(e.__class__).lower():
+            logger.error(f"Gemini API generation error for request {request_id} after {process_time:.3f}s: {str(e)}")
+            raise ValueError(f"Gemini API generation error: {str(e)}. Please try again with a different query.")
+        else:
+            logger.error(f"Unexpected error calling Gemini API for request {request_id} after {process_time:.3f}s: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise Exception(f"Error calling Gemini API: {str(e)}. Please check your query and try again.")
+
+def validate_response_structure(response: Dict[str, Any]) -> None:
+    """
+    Validate that the response has the expected structure.
+
+    Args:
+        response: The parsed JSON response
+
+    Raises:
+        ValueError: If the response is missing required fields
+    """
+    required_fields = ["machines", "jobs", "rig_change_times", "solver_settings"]
+    missing_fields = [field for field in required_fields if field not in response]
+
+    if missing_fields:
+        missing_fields_str = ", ".join(missing_fields)
+        logger.error(f"Response missing required fields: {missing_fields_str}")
+        raise ValueError(f"Invalid response format: missing required fields ({missing_fields_str})")
+
+    # Validate machines
+    if not isinstance(response["machines"], list):
+        logger.error("Invalid machines format: not a list")
+        raise ValueError("Invalid response format: machines must be a list")
+
+    # Validate jobs
+    if not isinstance(response["jobs"], list):
+        logger.error("Invalid jobs format: not a list")
+        raise ValueError("Invalid response format: jobs must be a list")
+
+    # Validate rig_change_times
+    if not isinstance(response["rig_change_times"], list):
+        logger.error("Invalid rig_change_times format: not a list")
+        raise ValueError("Invalid response format: rig_change_times must be a list")
+
+    # Validate solver_settings
+    if not isinstance(response["solver_settings"], dict):
+        logger.error("Invalid solver_settings format: not a dictionary")
+        raise ValueError("Invalid response format: solver_settings must be a dictionary")
+./api/modules/problem.py
+import os
+import json
+from typing import Dict, Any
+from .models import SchedulingProblem, LLMReply
+from .llm import call_gemini_api, call_builder, _mock_llm_reply
+
+def interactive_step(msg: str, current_state: Dict, confirm: bool, test_mode: bool) -> LLMReply:
+    """
+    Process a user message and update the problem state interactively.
+
+    Args:
+        msg: The user message
+        current_state: The current problem state
+        confirm: Whether this is a confirmation step
+        test_mode: Whether to use mock responses
+
+    Returns:
+        LLMReply: The response from the LLM
+    """
+    print(f"interactive_step called with test_mode={test_mode}, confirm={confirm}, msg={msg[:50]}")
+    if test_mode:
+        print("Using mock LLM reply")
+        mock_reply = _mock_llm_reply(msg, current_state, confirm)
+        print(f"Mock reply: {mock_reply.clarification_question}, is_complete={mock_reply.is_complete}, ready_to_solve={mock_reply.ready_to_solve}")
+        return mock_reply
+
+    # Check if the problem state is too large
+    if current_state and len(json.dumps(current_state)) > 5000:
+        return LLMReply(
+            scheduling_problem=current_state,
+            clarification_question="Your problem is getting quite complex. Could you simplify it or focus on the essential parts?",
+            is_complete=False,
+            ready_to_solve=False
+        )
+
+    # Get the last two clarification questions from the state
+    last_questions = current_state.get("_last_questions", [])
+
+    # Call the builder
+    llm_reply = call_builder(msg, current_state, confirm)
+
+    # Check for repeated question loop
+    if llm_reply.clarification_question:
+        if len(last_questions) >= 2 and llm_reply.clarification_question == last_questions[-1]:
+            # We're in a loop, ask for support
+            llm_reply.clarification_question = "I seem to be having trouble understanding. Could you try rephrasing your request, or would you like to speak with our support team?"
+            llm_reply.requires_support = True
+
+        # Update the last questions in the state
+        last_questions.append(llm_reply.clarification_question)
+        if len(last_questions) > 2:
+            last_questions.pop(0)
+
+        # Store the last questions in the state
+        llm_reply.scheduling_problem["_last_questions"] = last_questions
+
+    return llm_reply
+
+def formulate_scheduling_problem(message: str, context: Dict[str, Any], test_mode: bool = False) -> SchedulingProblem:
+    """
+    Formulate a scheduling problem based on the user message using Gemini 2.5 Pro.
+
+    Args:
+        message: The user message describing the scheduling problem
+        context: Additional context that may contain pre-formulated parts of the problem
+
+    Returns:
+        SchedulingProblem: The formulated scheduling problem
+    """
+    try:
+        # If context already contains all the necessary components, use them directly
+        if all(key in context for key in ["machines", "jobs", "rig_change_times", "solver_settings"]):
+            return SchedulingProblem(
+                machines=context["machines"],
+                jobs=context["jobs"],
+                rig_change_times=context["rig_change_times"],
+                solver_settings=context["solver_settings"]
+            )
+
+        # Load the system prompt
+        try:
+            import os.path
+            prompt_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "system_prompt.txt")
+            with open(prompt_path, "r") as f:
+                system_prompt = f.read()
+        except FileNotFoundError:
+            raise ValueError("System prompt file not found")
+
+        # Call Gemini API to parse the message
+        GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+        if not GOOGLE_API_KEY:
+            raise ValueError("GOOGLE_API_KEY not found in environment variables")
+
+        # Call Gemini API or generate mock response in test mode
+        problem_json = call_gemini_api(system_prompt, message, test_mode)
+
+        # Validate the response
+        required_keys = ["machines", "jobs", "rig_change_times", "solver_settings"]
+        if not all(key in problem_json for key in required_keys):
+            missing_keys = [key for key in required_keys if key not in problem_json]
+            raise ValueError(f"Missing required keys in Gemini response: {missing_keys}")
+
+        # Create and return the SchedulingProblem
+        return SchedulingProblem(
+            machines=problem_json["machines"],
+            jobs=problem_json["jobs"],
+            rig_change_times=problem_json["rig_change_times"],
+            solver_settings=problem_json["solver_settings"]
+        )
+
+    except Exception as e:
+        # If there's an error with Gemini, fall back to the context or default values
+        print(f"Error formulating problem with Gemini: {str(e)}")
+
+        # Use default values for scheduling problem
+        machines = context.get("machines", [
+            {"machine_id": 1, "processing_time": 1}
+        ])
+
+        jobs = context.get("jobs", [
+            {"job_id": 1, "rig_id": 1},
+            {"job_id": 2, "rig_id": 1}
+        ])
+
+        rig_change_times = context.get("rig_change_times", [
+            [0, 1],
+            [1, 0]
+        ])
+
+        solver_settings = context.get("solver_settings", {
+            "max_time": 60,
+            "use_heuristics": True,
+            "solver_function": "GLOBAL"
+        })
+
+        return SchedulingProblem(
+            machines=machines,
+            jobs=jobs,
+            rig_change_times=rig_change_times,
+            solver_settings=solver_settings
+        )
+./api/modules/utils.py
+from typing import Dict, Any, Tuple
+import logging
+import time
+import traceback
+
+# Configure logging
+logger = logging.getLogger("api.utils")
+
+def analyze_message(message: str) -> Tuple[str, float]:
+    """
+    Analyze the user message to determine intent and complexity.
+
+    Args:
+        message: The user message to analyze
+
+    Returns:
+        tuple: (intent, complexity)
+
+    Raises:
+        ValueError: If the message is empty or invalid
+    """
+    request_id = f"analyze-{int(time.time())}"
+    logger.info(f"Analyzing message {request_id} (length: {len(message)})")
+    start_time = time.time()
+
+    try:
+        # Validate input
+        if not message or not isinstance(message, str):
+            logger.error(f"Invalid message for request {request_id}: empty or not a string")
+            raise ValueError("Message must be a non-empty string")
+
+        # This is a simplified implementation
+        # In a real-world scenario, you would use an NLP model or service
+
+        # Check for scheduling-related keywords
+        scheduling_keywords = ["schedule", "scheduling", "machine", "job", "rig", "makespan", "sequence", "assignment"]
+        keyword_matches = [keyword for keyword in scheduling_keywords if keyword in message.lower()]
+
+        if keyword_matches:
+            intent = "solve_optimization"  # Keep the same intent name for compatibility
+            logger.debug(f"Detected scheduling intent for request {request_id} based on keywords: {', '.join(keyword_matches)}")
+        else:
+            intent = "general_query"
+            logger.debug(f"Detected general query intent for request {request_id}")
+
+        # Estimate complexity based on message length and presence of technical terms
+        length_complexity = min(len(message) / 200, 10)  # Simple heuristic - 1 point per 200 characters
+        logger.debug(f"Base complexity for request {request_id} from message length ({len(message)} chars): {length_complexity:.2f}")
+
+        complexity = length_complexity
+        technical_terms = ["rig change times", "multiple machines", "precedence constraints", "release dates", "due dates"]
+        term_matches = [term for term in technical_terms if term in message.lower()]
+
+        for term in term_matches:
+            complexity += 1
+            logger.debug(f"Increased complexity for request {request_id} due to term: {term}")
+
+        final_complexity = min(complexity, 10)
+
+        if term_matches:
+            logger.debug(f"Added {len(term_matches)} points to complexity for request {request_id} due to technical terms: {', '.join(term_matches)}")
+
+        process_time = time.time() - start_time
+        logger.info(f"Message analysis for request {request_id} completed in {process_time:.3f}s: intent={intent}, complexity={final_complexity:.1f}")
+
+        return intent, final_complexity
+
+    except Exception as e:
+        process_time = time.time() - start_time
+        logger.error(f"Error analyzing message for request {request_id} after {process_time:.3f}s: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise ValueError(f"Failed to analyze message: {str(e)}")
+
+def generate_response(message: str, api_response: Dict[str, Any]) -> str:
+    """
+    Generate a human-friendly response based on the API response.
+
+    Args:
+        message: The original user message
+        api_response: The response from the OWPy API
+
+    Returns:
+        str: A human-friendly response
+    """
+    request_id = f"response-{int(time.time())}"
+    logger.info(f"Generating response for request {request_id}")
+    start_time = time.time()
+
+    try:
+        # Validate input
+        if not isinstance(api_response, dict):
+            logger.error(f"Invalid API response for request {request_id}: not a dictionary")
+            return "I received an invalid response format. Please try again or contact support."
+
+        # Check response status
+        status = api_response.get("status")
+        logger.debug(f"API response status for request {request_id}: {status}")
+
+        if status == "success":
+            # Extract solution details
+            if "solution" not in api_response:
+                logger.error(f"Missing solution in API response for request {request_id}")
+                return "I received an incomplete response. Please try again or contact support."
+
+            solution = api_response["solution"]
+
+            # Extract and validate solution components
+            if "objective_value" not in solution:
+                logger.error(f"Missing objective_value in solution for request {request_id}")
+                return "The solution is missing the objective value. Please try again or contact support."
+
+            makespan = solution["objective_value"]  # This is the makespan in scheduling problems
+
+            if "variables" not in solution:
+                logger.error(f"Missing variables in solution for request {request_id}")
+                return "The solution is missing the job assignments. Please try again or contact support."
+
+            job_assignments = solution["variables"]
+            solve_time = solution.get("solve_time", "unknown")
+
+            logger.debug(f"Solution details for request {request_id}: makespan={makespan}, jobs={len(job_assignments)}, solve_time={solve_time}")
+
+            # Build the response
+            response = f"I've solved your scheduling problem! The optimal makespan is {makespan} time units.\n\n"
+            response += "The job assignments to machines are:\n"
+
+            # Group jobs by machine for clearer presentation
+            jobs_by_machine = {}
+            for job_name, machine_id in job_assignments.items():
+                if machine_id not in jobs_by_machine:
+                    jobs_by_machine[machine_id] = []
+                jobs_by_machine[machine_id].append(job_name)
+
+            for machine_id, jobs in jobs_by_machine.items():
+                response += f"- Machine {machine_id}: {', '.join(jobs)}\n"
+
+            response += f"\nThe solution was found in {solve_time} seconds."
+
+            process_time = time.time() - start_time
+            logger.info(f"Generated success response for request {request_id} in {process_time:.3f}s")
+
+            return response
+
+        elif status == "error":
+            error_message = api_response.get("error", "Unknown error")
+            status_code = api_response.get("status_code", "")
+
+            logger.warning(f"Error in API response for request {request_id}: {error_message} (status_code: {status_code})")
+
+            error_response = f"I couldn't solve your scheduling problem. "
+            error_response += f"Error: {error_message}\n\n"
+
+            # Add more helpful guidance based on error type
+            if "authentication" in error_message.lower() or "credentials" in error_message.lower():
+                error_response += "This appears to be an authentication issue. Please check your API credentials."
+            elif "timeout" in error_message.lower():
+                error_response += "The solver timed out. Try simplifying your problem or increasing the solver time limit."
+            elif "format" in error_message.lower() or "invalid" in error_message.lower():
+                error_response += "There might be an issue with how the problem was formulated. Please check your input data."
+            else:
+                error_response += "Please check your formulation or contact support for assistance."
+
+            process_time = time.time() - start_time
+            logger.info(f"Generated error response for request {request_id} in {process_time:.3f}s")
+
+            return error_response
+
+        else:
+            logger.warning(f"Unknown status in API response for request {request_id}: {status}")
+            return "I couldn't solve your scheduling problem due to an unknown response status. Please try again or contact support."
+
+    except Exception as e:
+        process_time = time.time() - start_time
+        logger.error(f"Error generating response for request {request_id} after {process_time:.3f}s: {str(e)}")
+        logger.error(traceback.format_exc())
+        return f"I encountered an error while processing the solution: {str(e)}. Please try again or contact support."
+
+def generate_general_response(message: str, intent: str) -> str:
+    """
+    Generate a general response for non-scheduling queries.
+
+    Args:
+        message: The user message
+        intent: The detected intent
+
+    Returns:
+        str: A response message
+    """
+    request_id = f"general-{int(time.time())}"
+    logger.info(f"Generating general response for request {request_id} with intent: {intent}")
+    start_time = time.time()
+
+    try:
+        # Validate inputs
+        if not message:
+            logger.warning(f"Empty message for request {request_id}")
+
+        if not intent:
+            logger.warning(f"Empty intent for request {request_id}")
+            intent = "unknown"
+
+        # Generate appropriate response based on intent
+        if intent == "general_query":
+            response = (
+                "I'm an OWPy assistant designed to help with scheduling problems. "
+                "You can ask me to formulate and solve scheduling problems for you. "
+                "For example, you could describe a problem with 'machines, jobs, and rig requirements' "
+                "and I'll help you find the optimal schedule to minimize the makespan."
+            )
+            logger.debug(f"Generated general information response for request {request_id}")
+        elif intent == "solve_optimization" and len(message) < 20:
+            # If the intent is to solve a problem but the message is too short
+            response = (
+                "I'd be happy to help solve your scheduling problem, but I need more details. "
+                "Please describe your problem with information about machines, jobs, and any constraints. "
+                "For example: 'I have 3 machines and 10 jobs with different rig requirements. How should I schedule them?'"
+            )
+            logger.debug(f"Generated request for more details response for request {request_id}")
+        else:
+            response = "I'm not sure how to help with that. Could you provide more details about your scheduling problem?"
+            logger.debug(f"Generated fallback response for request {request_id} with intent: {intent}")
+
+        process_time = time.time() - start_time
+        logger.info(f"General response generated for request {request_id} in {process_time:.3f}s")
+
+        return response
+
+    except Exception as e:
+        process_time = time.time() - start_time
+        logger.error(f"Error generating general response for request {request_id} after {process_time:.3f}s: {str(e)}")
+        logger.error(traceback.format_exc())
+        return "I'm having trouble generating a response right now. Please try again with a more specific question about scheduling problems."
+./api/modules/owpy.py
+import os
+import requests
+import random
+import logging
+import time
+import traceback
+from typing import Dict, Any, Optional
+from datetime import datetime
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from .models import SchedulingProblem, ScenarioOptimizeRequest, IOScenario, SolverSettings, SolverFunction, SolutionAndTime
+
+# Configure logging
+logger = logging.getLogger("api.owpy")
+
+# OWPy API URL and authentication
+OWPY_API_URL = os.getenv("OWPY_API_URL", "https://api.optware.com/owpy")
+OWPY_AUTH_CREDENTIALS = os.getenv("OWPY_AUTH_CREDENTIALS")  # Authentication credentials
+
+if OWPY_API_URL:
+    logger.info(f"OWPy API URL configured: {OWPY_API_URL}")
+else:
+    logger.warning("OWPy API URL not configured, using default")
+
+if OWPY_AUTH_CREDENTIALS:
+    logger.info("OWPy authentication credentials configured")
+else:
+    logger.warning("OWPy authentication credentials not configured")
+
+def convert_to_owpy_format(problem: SchedulingProblem) -> ScenarioOptimizeRequest:
+    """
+    Convert our internal SchedulingProblem format to the OWPy API format.
+
+    This is a direct conversion since our SchedulingProblem model is already
+    structured to match OWPy's expectations.
+
+    Args:
+        problem: The scheduling problem in our internal format
+
+    Returns:
+        ScenarioOptimizeRequest: The problem in OWPy API format
+
+    Raises:
+        ValueError: If the problem format is invalid
+    """
+    logger.debug("Converting scheduling problem to OWPy format")
+    start_time = time.time()
+
+    try:
+        # Validate problem structure
+        if not problem.machines:
+            logger.error("Invalid problem: no machines defined")
+            raise ValueError("No machines defined in the scheduling problem")
+
+        if not problem.jobs:
+            logger.error("Invalid problem: no jobs defined")
+            raise ValueError("No jobs defined in the scheduling problem")
+
+        if not problem.rig_change_times:
+            logger.error("Invalid problem: no rig change times defined")
+            raise ValueError("No rig change times defined in the scheduling problem")
+
+        # Create the scenario from our scheduling problem
+        # Clone jobs so we don't mutate original and convert to dict format
+        owpy_jobs = [j.model_dump() for j in problem.jobs]
+
+        scenario = IOScenario(
+            Machines=problem.machines,
+            Jobs=owpy_jobs,
+            Rigs=problem.rig_change_times
+        )
+
+        # Create solver settings
+        settings = SolverSettings(
+            MaxTime=problem.solver_settings.get("max_time", 60),
+            UseHeuristics=problem.solver_settings.get("use_heuristics", True)
+        )
+
+        # Get solver function or default to GLOBAL
+        solver_func_str = problem.solver_settings.get("solver_function", "GLOBAL")
+        logger.debug(f"Using solver function: {solver_func_str}")
+        solver_func = SolverFunction(solver_func_str)
+
+        # Create the request
+        request = ScenarioOptimizeRequest(
+            scenarioInput=scenario,
+            solverFunc=solver_func,
+            solver_settings=settings
+        )
+
+        process_time = time.time() - start_time
+        logger.debug(f"Converted problem to OWPy format in {process_time:.3f}s")
+
+        return request
+
+    except Exception as e:
+        logger.error(f"Error converting problem to OWPy format: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise ValueError(f"Failed to convert problem to OWPy format: {str(e)}")
+
+def generate_random_solution(problem: SchedulingProblem) -> Dict[str, Any]:
+    """
+    Generate a random solution for a scheduling problem.
+    This is used in test mode to avoid calling the OWPy API.
+
+    Args:
+        problem: The scheduling problem to solve
+
+    Returns:
+        Dict[str, Any]: A randomly generated solution
+    """
+    logger.info("Generating random solution for test mode")
+    start_time = time.time()
+
+    try:
+        # Validate problem structure
+        if not problem.machines:
+            logger.error("Invalid problem: no machines defined")
+            return {
+                "status": "error",
+                "error": "No machines defined in the scheduling problem"
+            }
+
+        if not problem.jobs:
+            logger.error("Invalid problem: no jobs defined")
+            return {
+                "status": "error",
+                "error": "No jobs defined in the scheduling problem"
+            }
+
+        # Get the number of jobs and machines
+        num_jobs = len(problem.jobs)
+        num_machines = len(problem.machines)
+        logger.debug(f"Generating random solution for {num_jobs} jobs and {num_machines} machines")
+
+        # Randomly assign jobs to machines
+        job_assignments = {}
+        for i, job in enumerate(problem.jobs):
+            machine_id = str(random.randint(1, num_machines))
+            job_assignments[f"job_{i+1}"] = machine_id
+
+        # Generate a random makespan between 5 and 20
+        makespan = random.randint(5, 20)
+
+        # Generate a random solve time between 0.1 and 2.0 seconds
+        solve_time = round(random.uniform(0.1, 2.0), 1)
+
+        # Create the solution in the same format as the OWPy API
+        solution = {
+            "status": "success",
+            "solution": {
+                "objective_value": makespan,
+                "variables": job_assignments,
+                "solve_time": solve_time
+            }
+        }
+
+        process_time = time.time() - start_time
+        logger.info(f"Random solution generated in {process_time:.3f}s")
+        logger.debug(f"Random solution: {solution}")
+
+        return solution
+
+    except Exception as e:
+        logger.error(f"Error generating random solution: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            "status": "error",
+            "error": f"Failed to generate random solution: {str(e)}"
+        }
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((requests.ConnectionError, requests.Timeout))
+)
+def call_owpy_api(problem: SchedulingProblem, test_mode: bool = False) -> Dict[str, Any]:
+    """
+    Call the OWPy API with the formulated scheduling problem or generate a random solution in test mode.
+
+    This function includes retry logic for handling transient network errors.
+
+    Args:
+        problem: The scheduling problem to solve
+        test_mode: If True, generate a random solution instead of calling the OWPy API
+
+    Returns:
+        Dict[str, Any]: The API response or a randomly generated solution
+    """
+    request_id = f"owpy-{int(time.time())}"
+    logger.info(f"OWPy API request {request_id} initiated (test_mode={test_mode})")
+    start_time = time.time()
+
+    # In test mode, generate a random solution
+    if test_mode:
+        logger.info(f"Test mode enabled for request {request_id}, using random solution")
+        return generate_random_solution(problem)
+
+    # Check if OWPy authentication credentials are set
+    if not OWPY_AUTH_CREDENTIALS:
+        logger.error(f"OWPy authentication credentials not configured for request {request_id}")
+        return {
+            "status": "error",
+            "error": "OWPy authentication credentials not configured. Please set the OWPY_AUTH_CREDENTIALS environment variable."
+        }
+
+    try:
+        # Convert our problem format to OWPy format
+        logger.debug(f"Converting problem to OWPy format for request {request_id}")
+        owpy_request = convert_to_owpy_format(problem)
+
+        # Set up headers with authentication
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        # Add authentication credentials if available
+        if OWPY_AUTH_CREDENTIALS:
+            headers["Authorization"] = f"Bearer {OWPY_AUTH_CREDENTIALS}"
+            logger.debug(f"Added authentication header for request {request_id}")
+
+        # Prepare request data
+        api_url = f"{OWPY_API_URL}/api/v1/solve/"
+        request_data = owpy_request.dict()
+        logger.debug(f"Sending request {request_id} to {api_url}")
+
+        # Make the API call
+        logger.info(f"Making OWPy API call for request {request_id}")
+        response = requests.post(
+            api_url,
+            json=request_data,
+            headers=headers,
+            timeout=60  # Add timeout to prevent hanging requests
+        )
+
+        # Check for errors
+        response.raise_for_status()
+        logger.debug(f"Received response for request {request_id}: status_code={response.status_code}")
+
+        # Parse the response
+        try:
+            logger.debug(f"Parsing JSON response for request {request_id}")
+            response_data = response.json()
+            solution_and_time = SolutionAndTime(**response_data)
+
+            # Validate response structure
+            if not hasattr(solution_and_time, 'makespan') or not hasattr(solution_and_time, 'machines_distribution'):
+                logger.error(f"Invalid response structure for request {request_id}")
+                return {
+                    "status": "error",
+                    "error": "Invalid response from OWPy API: missing required fields"
+                }
+
+            # Convert to our internal format
+            result = {
+                "status": "success",
+                "solution": {
+                    "objective_value": solution_and_time.makespan,  # Use makespan as objective value
+                    "variables": {
+                        f"job_{i+1}": machine_id  # Map job to machine assignment
+                        for machine_id, jobs in solution_and_time.machines_distribution.items()
+                        for i, job_id in enumerate(jobs)
+                    },
+                    "solve_time": solution_and_time.time_needed_in_s
+                }
+            }
+
+            process_time = time.time() - start_time
+            logger.info(f"OWPy API request {request_id} completed successfully in {process_time:.3f}s")
+            logger.debug(f"OWPy API response for request {request_id}: {result}")
+
+            return result
+
+        except (ValueError, TypeError, KeyError) as e:
+            logger.error(f"Error parsing OWPy API response for request {request_id}: {str(e)}")
+            logger.error(f"Response content: {response.text[:500]}...")
+            return {
+                "status": "error",
+                "error": f"Invalid response format from OWPy API: {str(e)}"
+            }
+
+    except requests.RequestException as e:
+        # Handle API errors
+        process_time = time.time() - start_time
+        logger.error(f"OWPy API request error for {request_id} after {process_time:.3f}s: {str(e)}")
+
+        error_msg = str(e)
+        status_code = None
+
+        try:
+            if hasattr(e, 'response') and e.response is not None:
+                status_code = e.response.status_code
+                logger.debug(f"Error status code for request {request_id}: {status_code}")
+
+                try:
+                    error_data = e.response.json()
+                    if 'detail' in error_data:
+                        error_msg = error_data['detail']
+                        logger.debug(f"Error detail for request {request_id}: {error_msg}")
+                except (ValueError, TypeError) as json_err:
+                    logger.warning(f"Could not parse error response JSON for request {request_id}: {str(json_err)}")
+                    logger.debug(f"Error response content: {e.response.text[:500]}...")
+        except Exception as parse_err:
+            logger.warning(f"Error extracting details from exception for request {request_id}: {str(parse_err)}")
+
+        # Return error response with status code if available
+        error_response = {
+            "status": "error",
+            "error": f"Error calling OWPy API: {error_msg}"
+        }
+
+        if status_code:
+            error_response["status_code"] = status_code
+
+        return error_response
+
+    except Exception as e:
+        # Handle other errors
+        process_time = time.time() - start_time
+        logger.error(f"Unexpected error for OWPy API request {request_id} after {process_time:.3f}s: {str(e)}")
+        logger.error(traceback.format_exc())
+
+        return {
+            "status": "error",
+            "error": f"Unexpected error processing OWPy API request: {str(e)}"
+        }

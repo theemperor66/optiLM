@@ -23,7 +23,8 @@ Extract the information and output a JSON object that strictly conforms to the s
     "max_time": number,          // Maximum solve time in seconds
     "use_heuristics": boolean,   // Whether to use heuristics
     "solver_function": string    // "GLOBAL", "TWO_STEP", "SA", or "BranchAndBound"
-  }
+  },
+  "timeunit": string             // e.g., "minutes", "hours", "seconds"
 }
 ```
 
@@ -46,10 +47,15 @@ Follow these steps:
    - Determine whether to use heuristics.
    - Determine which solver function to use.
 
+5. **Identify Time Unit:**
+   - Determine the time unit used in the problem (e.g., minutes, hours, seconds).
+   - If not explicitly mentioned, use "minutes" as the default.
+
 If any information is not explicitly provided in the problem description, use these defaults:
 - For missing machines: Create one machine with ID 1 and processing time 1
 - For missing jobs: Create jobs with sequential IDs starting from 1, all using rig ID 1
 - For missing rig change times: Use a simple 2x2 matrix [[0, 1], [1, 0]]
 - For missing solver settings: max_time=60, use_heuristics=true, solver_function="GLOBAL"
+- For missing timeunit: Use "minutes" as the default
 
 Output only the final JSON object without any additional text or explanations.

@@ -1,4 +1,5 @@
-import requests
+from fastapi.testclient import TestClient
+from api.main import app
 import json
 import os
 from dotenv import load_dotenv
@@ -6,8 +7,13 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Set dummy API key for tests
+os.environ.setdefault("GOOGLE_API_KEY", "test")
+
+# Use FastAPI TestClient for in-process testing
+client = TestClient(app)
+
 # API URL (configurable via environment variable)
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
 
 def test_chat_endpoint():
     """Test the chat endpoint with a scheduling problem."""
@@ -24,8 +30,8 @@ def test_chat_endpoint():
 
     # Call the API
     try:
-        response = requests.post(
-            f"{API_URL}/chat",
+        response = client.post(
+            "/chat",
             json={"message": message}
         )
         response.raise_for_status()
@@ -50,10 +56,10 @@ def test_chat_endpoint():
         else:
             print("\nNo API response was returned.")
 
-        return result
-    except requests.RequestException as e:
-        print(f"Error calling API: {str(e)}")
-        return None
+        assert result is not None
+        assert 'response' in result
+    except Exception as e:
+        raise AssertionError(f"Error calling API: {e}")
 
 def test_chat_endpoint_with_test_mode():
     """Test the chat endpoint with a scheduling problem in test mode."""
@@ -70,8 +76,8 @@ def test_chat_endpoint_with_test_mode():
 
     # Call the API with test_mode=True
     try:
-        response = requests.post(
-            f"{API_URL}/chat",
+        response = client.post(
+            "/chat",
             json={"message": message, "test_mode": True}
         )
         response.raise_for_status()
@@ -110,10 +116,10 @@ def test_chat_endpoint_with_test_mode():
         else:
             print("\nNo API response was returned.")
 
-        return result
-    except requests.RequestException as e:
-        print(f"Error calling API: {str(e)}")
-        return None
+        assert result is not None
+        assert 'response' in result
+    except Exception as e:
+        raise AssertionError(f"Error calling API: {e}")
 
 def test_conversational_approach():
     """Test the conversational approach with multiple messages."""
@@ -124,8 +130,8 @@ def test_conversational_approach():
 
     try:
         # First message - should ask about jobs
-        response1 = requests.post(
-            f"{API_URL}/chat",
+        response1 = client.post(
+            "/chat",
             json={"message": message1, "test_mode": True}
         )
         response1.raise_for_status()
@@ -142,8 +148,8 @@ def test_conversational_approach():
         # Step 2: Add jobs
         message2 = "Job 1 rig 1 time 3; Job 2 rig 2 time 4"
 
-        response2 = requests.post(
-            f"{API_URL}/chat",
+        response2 = client.post(
+            "/chat",
             json={"message": message2, "context": context1, "test_mode": True}
         )
         response2.raise_for_status()
@@ -159,8 +165,8 @@ def test_conversational_approach():
         # Step 3: Add rig matrix and max time
         message3 = "rig matrix [[0,1],[1,0]]; max time 30"
 
-        response3 = requests.post(
-            f"{API_URL}/chat",
+        response3 = client.post(
+            "/chat",
             json={"message": message3, "context": context2, "test_mode": True}
         )
         response3.raise_for_status()
@@ -176,8 +182,8 @@ def test_conversational_approach():
         # Step 4: Solve the problem
         message4 = "solve"
 
-        response4 = requests.post(
-            f"{API_URL}/chat",
+        response4 = client.post(
+            "/chat",
             json={"message": message4, "context": context3, "test_mode": True}
         )
         response4.raise_for_status()
@@ -190,14 +196,13 @@ def test_conversational_approach():
         # Check if the API was called and returned a response
         if result4.get('api_response') and result4['api_response'].get('status') == 'success':
             print("\nTest passed! Conversational approach is working correctly.")
-            return True
+            assert True
         else:
             print("\nTest failed! API response not received or status not success.")
-            return False
+            assert False
 
-    except requests.RequestException as e:
-        print(f"Error calling API: {str(e)}")
-        return False
+    except Exception as e:
+        raise AssertionError(f"Error calling API: {e}")
 
 if __name__ == "__main__":
     # Test regular mode

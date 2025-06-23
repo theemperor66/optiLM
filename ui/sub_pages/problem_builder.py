@@ -1,21 +1,70 @@
 # (imports unchanged)
+import json
 import streamlit as st
 from modules.api_client import call_chat_api, get_available_solvers
 from modules.visualization import visualize_problem, visualize_solution
+from modules.problem_io import (
+    get_default_problem,
+    to_example_format,
+    from_example_format,
+)
 
 def show_problem_builder(test_mode: bool = False):
     st.title("Scheduling Problem Builder")
 
     # ---------------- Initialise state -------------------------------------
-    ss = st.session_state                      # shorthand
+    ss = st.session_state  # shorthand
 
-    ss.setdefault("machines",       [dict(machine_id=1, start_rig_id=1)])
-    ss.setdefault("jobs",           [dict(job_id=1, rig_id=1, processing_time=1)])
-    ss.setdefault("rig_change_times", [[0, 1], [1, 0]])
-    ss.setdefault("solver_settings", dict(max_time=60,
-                                          use_heuristics=True,
-                                          solver_function="GLOBAL"))
-    ss.setdefault("solution", None)
+    ss.setdefault(
+        "current_problem",
+        {
+            "machines": [dict(machine_id=1, start_rig_id=1)],
+            "jobs": [dict(job_id=1, rig_id=1, processing_time=1)],
+            "rig_change_times": [[0, 1], [1, 0]],
+            "solver_settings": dict(max_time=60, use_heuristics=True, solver_function="GLOBAL"),
+        },
+    )
+    ss.setdefault("current_solution", None)
+
+    # Sidebar utilities ----------------------------------------------------
+    with st.sidebar:
+        st.markdown("### Problem File")
+        if st.button("🗑 Reset problem", key="reset_builder"):
+            ss.current_problem = get_default_problem()
+            ss.current_solution = None
+            ss.builder_sync_key = ""
+            st.rerun()
+
+        st.download_button(
+            label="⬇️ Download problem", 
+            data=json.dumps(to_example_format(ss.current_problem), indent=2),
+            file_name="problem.json",
+            mime="application/json",
+        )
+
+        uploaded = st.file_uploader("Load problem", type="json")
+        if uploaded is not None:
+            try:
+                data = json.load(uploaded)
+                ss.current_problem = from_example_format(data)
+                ss.current_solution = None
+                ss.builder_sync_key = ""
+                st.success("Problem loaded")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to load file: {e}")
+
+    # Sync builder-specific state with the shared problem
+    prob_hash = str(ss.current_problem)
+    if ss.get("builder_sync_key") != prob_hash:
+        ss.machines = ss.current_problem.get("machines", [dict(machine_id=1, start_rig_id=1)])
+        ss.jobs = ss.current_problem.get("jobs", [dict(job_id=1, rig_id=1, processing_time=1)])
+        ss.rig_change_times = ss.current_problem.get("rig_change_times", [[0, 1], [1, 0]])
+        ss.solver_settings = ss.current_problem.get(
+            "solver_settings", dict(max_time=60, use_heuristics=True, solver_function="GLOBAL")
+        )
+        ss.solution = ss.current_solution
+        ss.builder_sync_key = prob_hash
 
     col1, col2 = st.columns([1, 1])
 
@@ -157,10 +206,13 @@ def show_problem_builder(test_mode: bool = False):
                                   solver_function=func)
 
         # ---------- SOLVE ---------------------------------------------------
-        problem = dict(machines=ss.machines,
-                       jobs=ss.jobs,
-                       rig_change_times=ss.rig_change_times,
-                       solver_settings=ss.solver_settings)
+        problem = dict(
+            machines=ss.machines,
+            jobs=ss.jobs,
+            rig_change_times=ss.rig_change_times,
+            solver_settings=ss.solver_settings,
+        )
+        ss.current_problem = problem
 
         if st.button("🚀 Solve problem"):
             with st.spinner("Contacting solver…"):
@@ -168,14 +220,13 @@ def show_problem_builder(test_mode: bool = False):
                                       context=problem, test_mode=test_mode)
             if reply:
                 ss.solution = reply
+                ss.current_solution = reply
                 st.success("Solved!")
             else:
                 st.error("Solver failed – see sidebar logs.")
 
     # -----------------------------------------------------------------------
     with col2:
-        visualize_problem(dict(machines=ss.machines, jobs=ss.jobs,
-                               rig_change_times=ss.rig_change_times,
-                               solver_settings=ss.solver_settings))
-        if ss.solution:
-            visualize_solution(ss.solution)
+        visualize_problem(ss.current_problem)
+        if ss.current_solution:
+            visualize_solution(ss.current_solution)

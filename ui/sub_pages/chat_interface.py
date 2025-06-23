@@ -1,7 +1,13 @@
+import json
 import streamlit as st
 from modules.api_client import call_chat_api
 from modules.visualization import visualize_problem, visualize_solution
 from typing import Dict, Optional
+from modules.problem_io import (
+    get_default_problem,
+    to_example_format,
+    from_example_format,
+)
 
 def last_state(hist):
     """Get the last scheduling problem state from the chat history."""
@@ -44,8 +50,19 @@ def show_chat_interface(test_mode: bool = False):
 """)
 
     # -------- Session state -------------------------------------------------
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    ss = st.session_state
+    if "chat_history" not in ss:
+        ss.chat_history = []
+    ss.setdefault(
+        "current_problem",
+        {
+            "machines": [dict(machine_id=1, start_rig_id=1)],
+            "jobs": [dict(job_id=1, rig_id=1, processing_time=1)],
+            "rig_change_times": [[0, 1], [1, 0]],
+            "solver_settings": dict(max_time=60, use_heuristics=True, solver_function="GLOBAL"),
+        },
+    )
+    ss.setdefault("current_solution", None)
 
     # TODO: Future Enhancement - Example Library
     # This is where an example library could be implemented in the future.
@@ -84,22 +101,54 @@ def show_chat_interface(test_mode: bool = False):
     #    - Gradually introduce advanced features as users become more comfortable
 
     # -------- Sidebar -------------------------------------------------------
-    if st.sidebar.button("🗑 Reset problem", key="reset_problem"):
-        # Send a reset message to the API
-        with st.spinner("Resetting..."):
-            api_reply = call_chat_api("reset", test_mode=test_mode)
+    with st.sidebar:
+        if st.button("🗑 Reset problem", key="reset_problem"):
+            # Send a reset message to the API
+            with st.spinner("Resetting..."):
+                api_reply = call_chat_api("reset", test_mode=test_mode)
 
-        if api_reply is not None:
-            # Clear the chat history before adding the new message
-            st.session_state.chat_history = [{
-                "role": "assistant",
-                "content": api_reply["response"],
-                "problem": api_reply.get("scheduling_problem"),
-                "solution": None,
-                "is_problem_complete": False
-            }]
+            if api_reply is not None:
+                # Clear the chat history before adding the new message
+                ss.chat_history = [
+                    {
+                        "role": "assistant",
+                        "content": api_reply["response"],
+                        "problem": api_reply.get("scheduling_problem"),
+                        "solution": None,
+                        "is_problem_complete": False,
+                    }
+                ]
+                ss.current_problem = api_reply.get("scheduling_problem")
+                ss.current_solution = None
 
-        st.rerun()
+            st.rerun()
+
+        st.download_button(
+            label="⬇️ Download problem",
+            data=json.dumps(to_example_format(ss.current_problem), indent=2),
+            file_name="problem.json",
+            mime="application/json",
+        )
+
+        uploaded = st.file_uploader("Load problem", type="json")
+        if uploaded is not None:
+            try:
+                data = json.load(uploaded)
+                ss.current_problem = from_example_format(data)
+                ss.current_solution = None
+                ss.chat_history.append(
+                    {
+                        "role": "assistant",
+                        "content": "Loaded problem from file.",
+                        "problem": ss.current_problem,
+                        "solution": None,
+                        "is_problem_complete": False,
+                    }
+                )
+                st.success("Problem loaded")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to load file: {e}")
 
     # -------- Render history ------------------------------------------------
     for msg in st.session_state.chat_history:
@@ -114,8 +163,7 @@ def show_chat_interface(test_mode: bool = False):
                 visualize_solution(msg["solution"])
 
     # -------- User input ----------------------------------------------------
-    # Get the last problem state from the chat history
-    context = last_state(st.session_state.chat_history)
+    context = ss.current_problem
 
     # Set the placeholder text based on whether we have a context
     placeholder = "Answer the assistant's question…" if context else "Describe your scheduling problem…"
@@ -152,14 +200,19 @@ def show_chat_interface(test_mode: bool = False):
 
     # Ensure api_reply is not None before accessing its attributes
     if api_reply is not None:
-        st.session_state.chat_history.append(
+        ss.chat_history.append(
             {
                 "role": "assistant",
                 "content": api_reply["response"],
                 "problem": api_reply.get("scheduling_problem"),
                 "solution": api_reply
-                if api_reply.get("api_response") and api_reply.get("api_response", {}).get("status") == "success"
+                if api_reply.get("api_response")
+                and api_reply.get("api_response", {}).get("status") == "success"
                 else None,
-                "is_problem_complete": api_reply.get("is_problem_complete", False)
+                "is_problem_complete": api_reply.get("is_problem_complete", False),
             }
         )
+        if api_reply.get("scheduling_problem"):
+            ss.current_problem = api_reply["scheduling_problem"]
+        if api_reply.get("api_response") and api_reply.get("api_response", {}).get("status") == "success":
+            ss.current_solution = api_reply

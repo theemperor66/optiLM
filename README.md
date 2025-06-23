@@ -234,18 +234,15 @@ docker-compose --env-file .env down
 
 ## API Integrations
 
-This project integrates with two APIs:
+This project integrates with two main services:
 
-1. **Google's Gemini 2.5 Pro** - For parsing natural language descriptions of optimization problems
+1. **LLM Providers** (Google Gemini, OpenAI, Anthropic or Groq) - For parsing natural language descriptions of optimization problems
 2. **OWPy API** - For solving the formulated optimization problems
 
-### Setting Up Gemini API
+### Setting Up LLM Providers
 
-1. Obtain a Google API key from the [Google AI Studio](https://ai.google.dev/)
-2. Add your API key to the `.env` file:
-   ```
-   GOOGLE_API_KEY=your_actual_api_key_here
-   ```
+1. Obtain API keys for the providers you plan to use (Gemini, OpenAI, Anthropic or Groq).
+2. Add the keys to the `.env` file as shown below.
 
 ### Setting Up OWPy API
 
@@ -315,6 +312,7 @@ The Scheduling Problem Builder page allows you to define scheduling problems usi
 4. **Solver Settings**: Configure the solver with maximum time, heuristics option, and solver function
 5. **Visualization**: See a visual representation of your scheduling problem
 6. **Solve**: Submit the problem to the backend and view the solution
+7. **Reset / Import / Export**: Use the sidebar to reset the form or load and save problems as JSON files
 
 The Scheduling Problem Builder is ideal for users who want precise control over the problem formulation.
 
@@ -326,6 +324,7 @@ The Chat Interface page allows you to describe scheduling problems in natural la
 2. **Problem Extraction**: The system extracts the machines, jobs, and rig requirements from your description
 3. **Visualization**: See a visual representation of the extracted scheduling problem
 4. **Solution**: View the solution as a Gantt chart showing job assignments to machines
+5. **Reset / Import / Export**: Use the sidebar to reset the conversation or load and save problems as JSON files
 
 The Chat Interface is ideal for users who prefer to describe their problems conversationally.
 
@@ -370,7 +369,14 @@ When using Docker, you can configure the application using environment variables
 
 1. Create a `.env` file in the project root with the following variables:
    ```
+   # Select which provider to use: gemini, openai, anthropic or groq
+   LLM_PROVIDER=gemini
+
    GOOGLE_API_KEY=your_actual_api_key_here
+   OPENAI_API_KEY=your_openai_key_here
+   ANTHROPIC_API_KEY=your_anthropic_key_here
+   GROQ_API_KEY=your_groq_key_here
+
    OWPY_API_URL=https://api.optware.com/owpy
    OWPY_AUTH_CREDENTIALS=your_actual_owpy_credentials_here
    ```

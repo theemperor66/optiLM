@@ -368,11 +368,90 @@ class AnthropicProvider(LLMProvider):
             logger.error(f"Error generating JSON with Anthropic: {str(e)}")
             raise
 
+class GroqProvider(LLMProvider):
+    """Implementation of LLMProvider for Groq's API."""
+
+    def __init__(self):
+        self.api_key = os.getenv("GROQ_API_KEY")
+        self.model = os.getenv("GROQ_MODEL", "llama3-8b-8192")
+        self.client = None
+
+    def initialize(self) -> bool:
+        """Initialize the Groq provider with the API key."""
+        try:
+            from groq import Groq
+
+            if not self.api_key:
+                logger.error("Cannot initialize Groq: API key not configured")
+                return False
+
+            self.client = Groq(api_key=self.api_key)
+
+            logger.info("Groq provider initialized successfully")
+            logger.info(f"Using Groq model: {self.model}")
+            return True
+        except ImportError:
+            logger.error("Failed to import groq. Make sure it's installed.")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to initialize Groq provider: {str(e)}")
+            return False
+
+    def generate_text(self, prompt: str) -> str:
+        """Generate text using the Groq API."""
+        if not self.client:
+            if not self.initialize():
+                raise ValueError("Groq provider not initialized")
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+            )
+
+            if not response.choices or not response.choices[0].message.content:
+                raise ValueError("Invalid response format from Groq API: missing content")
+
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error generating text with Groq: {str(e)}")
+            raise
+
+    def generate_json(self, prompt: str, user_message: str) -> Dict[str, Any]:
+        """Generate and parse JSON using the Groq API."""
+        import json
+
+        if not self.client:
+            if not self.initialize():
+                raise ValueError("Groq provider not initialized")
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
+
+            if not response.choices or not response.choices[0].message.content:
+                raise ValueError("Invalid response format from Groq API: missing content")
+
+            content = response.choices[0].message.content
+            return json.loads(content)
+        except Exception as e:
+            logger.error(f"Error generating JSON with Groq: {str(e)}")
+            raise
+
 # Dictionary mapping provider names to their classes
 PROVIDER_CLASSES: Dict[str, Type[LLMProvider]] = {
     "gemini": GeminiProvider,
     "openai": OpenAIProvider,
-    "anthropic": AnthropicProvider
+    "anthropic": AnthropicProvider,
+    "groq": GroqProvider,
 }
 
 def get_provider(provider_name: Optional[str] = None) -> LLMProvider:

@@ -421,29 +421,74 @@ class GroqProvider(LLMProvider):
     def generate_json(self, prompt: str, user_message: str) -> Dict[str, Any]:
         """Generate and parse JSON using the Groq API."""
         import json
+        import re
 
         if not self.client:
             if not self.initialize():
                 raise ValueError("Groq provider not initialized")
 
+        # Add explicit JSON instructions to ensure proper formatting
+        json_system_prompt = f"{prompt}\n\nIMPORTANT: Your response MUST be valid JSON format ONLY, without any explanations or text outside the JSON structure. The response MUST be a valid JSON object that follows the schema described in the prompt. Do not include markdown formatting like ```json or ``` around your response."
+        
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": prompt},
+                    {"role": "system", "content": json_system_prompt},
                     {"role": "user", "content": user_message},
                 ],
                 temperature=0,
                 response_format={"type": "json_object"},
+                max_tokens=4000,  # Ensure we get a complete response
             )
 
             if not response.choices or not response.choices[0].message.content:
                 raise ValueError("Invalid response format from Groq API: missing content")
 
             content = response.choices[0].message.content
-            return json.loads(content)
+            
+            # Try to extract JSON if it appears to be wrapped in markdown code blocks or has preamble text
+            try:
+                # First, try direct parsing
+                return json.loads(content)
+            except json.JSONDecodeError:
+                # If direct parsing fails, try to extract JSON from the response
+                json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+                if json_match:
+                    extracted_json = json_match.group(1)
+                    return json.loads(extracted_json)
+                
+                # If that fails too, look for anything that looks like a JSON object
+                json_match = re.search(r'\{\s*"[^"]+"\s*:', content)
+                if json_match:
+                    start_idx = json_match.start()
+                    # Try to find the complete JSON object
+                    brace_count = 0
+                    in_string = False
+                    escape_next = False
+                    for i in range(start_idx, len(content)):
+                        char = content[i]
+                        if escape_next:
+                            escape_next = False
+                            continue
+                        if char == '\\"' and not escape_next and in_string:
+                            escape_next = True
+                        elif char == '"' and not escape_next:
+                            in_string = not in_string
+                        elif not in_string:
+                            if char == '{':
+                                brace_count += 1
+                            elif char == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    extracted_json = content[start_idx:i+1]
+                                    return json.loads(extracted_json)
+                
+                # If all extraction methods fail, raise the original error
+                raise ValueError(f"Could not parse JSON from response: {content[:100]}...")
         except Exception as e:
             logger.error(f"Error generating JSON with Groq: {str(e)}")
+            logger.error(f"Raw response content: {content[:500] if 'content' in locals() else 'No content'}")
             raise
 
 # Dictionary mapping provider names to their classes

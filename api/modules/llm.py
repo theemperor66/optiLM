@@ -71,16 +71,21 @@ def call_builder(user_msg: str, state: Dict, confirm=False) -> LLMReply:
     template_prompt = template_prompt.replace("{state_json}", state_json_str)
     template_prompt = template_prompt.replace("{user_msg}", user_msg)
 
-    prompt = header_prompt + template_prompt
+    # Add an explicit instruction for JSON output
+    if LLM_PROVIDER == "groq":
+        json_instruction = "\n\nIMPORTANT: Your response MUST be valid JSON format ONLY, without any explanations or text outside the JSON structure."
+        prompt = header_prompt + template_prompt + json_instruction
+    else:
+        prompt = header_prompt + template_prompt
 
     try:
-        # Call Gemini API
+        # Call API to get raw response
         raw = _call_gemini(prompt)
-
-        # Strip markdown fences if present
-        clean = re.sub(r"^\s*```json\s*|\s*```\s*$", "", raw.strip(), flags=re.I|re.S)
-
-        # Parse the response as JSON
+        
+        # Extract JSON from response
+        clean = extract_json_from_response(raw)
+        
+        # Parse the extracted JSON
         return LLMReply.model_validate_json(clean)
     except Exception as e:
         logger.error(f"LLM error: {e}\nRaw output: {raw[:120] if 'raw' in locals() else 'No output'}")
@@ -89,6 +94,44 @@ def call_builder(user_msg: str, state: Dict, confirm=False) -> LLMReply:
             clarification_question="Sorry, I couldn't parse that. Could you rephrase?",
             is_complete=False,
         )
+
+def extract_json_from_response(text: str) -> str:
+    """
+    Extract JSON from the model's response, handling various ways the model might format it.
+    """
+    # First try: Standard markdown code block extraction
+    json_match = re.search(r'```(?:json)?\s*({.*?})\s*```', text, re.DOTALL)
+    if json_match:
+        return json_match.group(1).strip()
+    
+    # Second try: Find the first opening curly brace and its matching closing brace
+    start_idx = text.find('{')
+    if start_idx >= 0:
+        # Find matching closing brace by counting balanced braces
+        brace_count = 0
+        in_string = False
+        escape_next = False
+        
+        for i in range(start_idx, len(text)):
+            char = text[i]
+            if escape_next:
+                escape_next = False
+                continue
+            if char == '\\' and not escape_next:
+                escape_next = True
+            elif char == '"' and not escape_next:
+                in_string = not in_string
+            elif not in_string:
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        return text[start_idx:i+1].strip()
+    
+    # If all extraction attempts fail, return the original stripped text
+    # This may still fail JSON parsing, but our try/except will handle it
+    return text.strip()
 
 def _call_gemini(prompt: str) -> str:
     """

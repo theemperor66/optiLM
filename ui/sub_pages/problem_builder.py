@@ -42,21 +42,54 @@ def show_problem_builder(test_mode: bool = False):
             mime="application/json",
         )
 
-        uploaded = st.file_uploader("Load problem", type="json", key="problem_uploader")
+        uploaded = st.file_uploader("Load problem", type="json", key="problem_uploader_" + str(hash("problem_uploader")))
         if uploaded is not None:
             # Only process the file if we haven't done so for this file already
-            file_id = id(uploaded)
+            file_id = hash(uploaded.name + str(uploaded.size))
             if ss.get("last_uploaded_file_id") != file_id:
                 try:
-                    data = json.load(uploaded)
-                    ss.current_problem = from_example_format(data)
-                    ss.current_solution = None
-                    ss.builder_sync_key = ""
-                    ss.last_uploaded_file_id = file_id
-                    st.success("Problem loaded")
-                    st.rerun()
+                    # Immediately read the file content before it potentially gets lost
+                    content = uploaded.read()
+                    uploaded.seek(0)  # Reset pointer
+                    
+                    # Create a backup of the file content in session state
+                    ss[f"file_backup_{file_id}"] = content
+                    
+                    try:
+                        # Try to parse the file
+                        data = json.loads(content.decode("utf-8"))
+                        ss.current_problem = from_example_format(data)
+                        ss.current_solution = None
+                        ss.builder_sync_key = ""
+                        ss.last_uploaded_file_id = file_id
+                        st.success("Problem loaded")
+                        st.rerun()
+                    except json.JSONDecodeError as je:
+                        st.error(f"Invalid JSON format: {je}")
                 except Exception as e:
-                    st.error(f"Failed to load file: {e}")
+                    # If we have a backup of the file content, try to use that
+                    if f"file_backup_{file_id}" in ss:
+                        try:
+                            backup_content = ss[f"file_backup_{file_id}"]
+                            data = json.loads(backup_content.decode("utf-8"))
+                            ss.current_problem = from_example_format(data)
+                            ss.current_solution = None
+                            ss.builder_sync_key = ""
+                            ss.last_uploaded_file_id = file_id
+                            st.success("Problem loaded from backup")
+                            st.rerun()
+                        except Exception as be:
+                            st.error(f"Failed to load file: {str(e)}\nBackup attempt also failed: {str(be)}")
+                    else:
+                        st.error(f"Failed to load file: {str(e)}")
+            elif ss.get("last_upload_success", False):
+                st.success("Problem previously loaded")
+            else:
+                st.warning("Upload was processed previously but failed. Please try a different file.")
+                
+        # Store upload success status for reference in subsequent reruns
+        if uploaded is not None and ss.get("last_uploaded_file_id") == hash(uploaded.name + str(uploaded.size)):
+            ss["last_upload_success"] = True
 
     # Sync builder-specific state with the shared problem
     prob_hash = str(ss.current_problem)

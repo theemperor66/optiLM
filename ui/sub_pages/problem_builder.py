@@ -42,23 +42,46 @@ def show_problem_builder(test_mode: bool = False):
             mime="application/json",
         )
 
-        uploaded = st.file_uploader("Load problem", type="json")
+        uploaded = st.file_uploader("Load problem", type="json", key="problem_uploader")
         if uploaded is not None:
-            try:
-                data = json.load(uploaded)
-                ss.current_problem = from_example_format(data)
-                ss.current_solution = None
-                ss.builder_sync_key = ""
-                st.success("Problem loaded")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed to load file: {e}")
+            # Only process the file if we haven't done so for this file already
+            file_id = id(uploaded)
+            if ss.get("last_uploaded_file_id") != file_id:
+                try:
+                    data = json.load(uploaded)
+                    ss.current_problem = from_example_format(data)
+                    ss.current_solution = None
+                    ss.builder_sync_key = ""
+                    ss.last_uploaded_file_id = file_id
+                    st.success("Problem loaded")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to load file: {e}")
 
     # Sync builder-specific state with the shared problem
     prob_hash = str(ss.current_problem)
     if ss.get("builder_sync_key") != prob_hash:
-        ss.machines = ss.current_problem.get("machines", [dict(machine_id=1, start_rig_id=1)])
-        ss.jobs = ss.current_problem.get("jobs", [dict(job_id=1, rig_id=1, processing_time=1)])
+        # Process machines - ensure all IDs are at least 1
+        machines = ss.current_problem.get("machines", [dict(machine_id=1, start_rig_id=1)])
+        normalized_machines = []
+        for machine in machines:
+            normalized_machines.append({
+                "machine_id": max(1, int(machine.get("machine_id", 1))),
+                "start_rig_id": max(1, int(machine.get("start_rig_id", 1)))
+            })
+        ss.machines = normalized_machines
+        
+        # Process jobs - ensure all IDs are at least 1
+        jobs = ss.current_problem.get("jobs", [dict(job_id=1, rig_id=1, processing_time=1)])
+        normalized_jobs = []
+        for job in jobs:
+            normalized_jobs.append({
+                "job_id": max(1, int(job.get("job_id", 1))),
+                "rig_id": max(1, int(job.get("rig_id", 1))),
+                "processing_time": max(1, int(job.get("processing_time", 1)))
+            })
+        ss.jobs = normalized_jobs
+        
         ss.rig_change_times = ss.current_problem.get("rig_change_times", [[0, 1], [1, 0]])
         ss.solver_settings = ss.current_problem.get(
             "solver_settings", dict(max_time=60, use_heuristics=True, solver_function="GLOBAL")

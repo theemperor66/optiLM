@@ -33,10 +33,12 @@ def to_example_format(problem: Dict[str, Any]) -> Dict[str, Any]:
 
 def from_example_format(data: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a problem in the example format to the internal representation."""
+    # Ensure we properly convert from 0-indexed to 1-indexed for rig IDs
     jobs = [
         {
             "job_id": i + 1,
-            "rig_id": j.get("Rig", 0) + 1,
+            # Ensure rig_id is always at least 1 (convert from 0-indexed to 1-indexed)
+            "rig_id": max(1, j.get("Rig", 0) + 1),
             "processing_time": j.get("Duration", 1),
         }
         for i, j in enumerate(data.get("Jobs", []))
@@ -44,7 +46,8 @@ def from_example_format(data: Dict[str, Any]) -> Dict[str, Any]:
     machines = [
         {
             "machine_id": i + 1,
-            "start_rig_id": m.get("Rig", 0) + 1,
+            # Ensure start_rig_id is always at least 1 (convert from 0-indexed to 1-indexed)
+            "start_rig_id": max(1, m.get("Rig", 0) + 1),
         }
         for i, m in enumerate(data.get("Machines", []))
     ]

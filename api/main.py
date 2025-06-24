@@ -115,7 +115,8 @@ async def chat(request: ChatRequest):
 
     # Process the user message with the interactive builder
     try:
-        llm = interactive_step(user_message, state_in, confirm, test_mode)
+        # Pass message_history to interactive_step if provided
+        llm = interactive_step(user_message, state_in, confirm, test_mode, request.message_history)
         logger.info(f"Interactive step completed for request {request_id}, is_complete={llm.is_complete}, ready_to_solve={llm.ready_to_solve}")
     except Exception as e:
         logger.error(f"Error in interactive step for request {request_id}: {str(e)}")

@@ -5,6 +5,7 @@ from enum import Enum
 class ChatRequest(BaseModel):
     message: str
     context: Optional[Dict[str, Any]] = None
+    message_history: Optional[List[Dict[str, str]]] = None
     test_mode: bool = False
 
 class LLMReply(BaseModel):

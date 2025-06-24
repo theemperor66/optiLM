@@ -1,10 +1,10 @@
 import os
 import json
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from .models import SchedulingProblem, LLMReply
-from .llm import call_gemini_api, call_builder, _mock_llm_reply
+from .llm import call_gemini_api, call_builder, _mock_llm_reply, MessageHistory
 
-def interactive_step(msg: str, current_state: Dict, confirm: bool, test_mode: bool) -> LLMReply:
+def interactive_step(msg: str, current_state: Dict, confirm: bool, test_mode: bool, message_history: Optional[List[Dict[str, str]]] = None) -> LLMReply:
     """
     Process a user message and update the problem state interactively.
 
@@ -18,6 +18,14 @@ def interactive_step(msg: str, current_state: Dict, confirm: bool, test_mode: bo
         LLMReply: The response from the LLM
     """
     print(f"interactive_step called with test_mode={test_mode}, confirm={confirm}, msg={msg[:50]}")
+    
+    # Convert message history to MessageHistory object if provided
+    history = None
+    if message_history is not None:
+        history = MessageHistory()
+        history.messages = message_history
+        print(f"Using message history with {len(message_history)} messages")
+    
     if test_mode:
         print("Using mock LLM reply")
         mock_reply = _mock_llm_reply(msg, current_state, confirm)
@@ -36,8 +44,8 @@ def interactive_step(msg: str, current_state: Dict, confirm: bool, test_mode: bo
     # Get the last two clarification questions from the state
     last_questions = current_state.get("_last_questions", [])
 
-    # Call the builder
-    llm_reply = call_builder(msg, current_state, confirm)
+    # Call the builder with message history if available
+    llm_reply = call_builder(msg, current_state, history, confirm)
 
     # Check for repeated question loop
     if llm_reply.clarification_question:

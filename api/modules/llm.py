@@ -5,7 +5,7 @@ import random
 import logging
 import time
 import traceback
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from .models import LLMReply
 from .llm_providers import get_provider, get_available_providers
@@ -30,6 +30,58 @@ except Exception as e:
     logger.warning(f"Falling back to default provider 'gemini'")
     provider = get_provider("gemini")
 
+
+class MessageHistory:
+    """
+    Container for message history in conversations with the LLM.
+    """
+    
+    def __init__(self, max_history: int = 10):
+        """
+        Initialize a message history container.
+        
+        Args:
+            max_history: Maximum number of messages to keep in history
+        """
+        self.messages: List[Dict[str, str]] = []
+        self.max_history = max_history
+    
+    def add_user_message(self, content: str) -> None:
+        """
+        Add a user message to the history.
+        
+        Args:
+            content: The content of the user message
+        """
+        self.messages.append({"role": "user", "content": content})
+        self._truncate_if_needed()
+    
+    def add_assistant_message(self, content: str) -> None:
+        """
+        Add an assistant message to the history.
+        
+        Args:
+            content: The content of the assistant message
+        """
+        self.messages.append({"role": "assistant", "content": content})
+        self._truncate_if_needed()
+    
+    def clear(self) -> None:
+        """
+        Clear the message history.
+        """
+        self.messages = []
+    
+    def _truncate_if_needed(self) -> None:
+        """
+        Truncate the history if it exceeds max_history.
+        """
+        if len(self.messages) > self.max_history:
+            # Remove oldest messages, but try to keep user/assistant pairs
+            # This helps maintain context even when truncating
+            truncate_count = len(self.messages) - self.max_history
+            self.messages = self.messages[truncate_count:]
+
 def load_prompt(filename: str) -> str:
     """
     Load a prompt template from the prompts directory.
@@ -48,13 +100,14 @@ def load_prompt(filename: str) -> str:
         logger.error(f"Prompt file {filename} not found")
         raise ValueError(f"Prompt file {filename} not found")
 
-def call_builder(user_msg: str, state: Dict, confirm=False) -> LLMReply:
+def call_builder(user_msg: str, state: Dict, message_history: Optional[MessageHistory] = None, confirm=False) -> LLMReply:
     """
     Call the interactive builder to process a user message and update the problem state.
 
     Args:
         user_msg: The user message
         state: The current problem state
+        message_history: Optional message history for conversation context
         confirm: Whether to use the confirm and solve prompt
 
     Returns:
@@ -70,6 +123,13 @@ def call_builder(user_msg: str, state: Dict, confirm=False) -> LLMReply:
     state_json_str = json.dumps(state or {}, separators=(',',':'))
     template_prompt = template_prompt.replace("{state_json}", state_json_str)
     template_prompt = template_prompt.replace("{user_msg}", user_msg)
+    
+    # Initialize message history if not provided
+    if message_history is None:
+        message_history = MessageHistory()
+    
+    # Add the current user message to history
+    message_history.add_user_message(user_msg)
 
     # Add an explicit instruction for JSON output
     if LLM_PROVIDER == "groq":
@@ -79,16 +139,26 @@ def call_builder(user_msg: str, state: Dict, confirm=False) -> LLMReply:
         prompt = header_prompt + template_prompt
 
     try:
-        # Call API to get raw response
-        raw = _call_gemini(prompt)
+        # Use the message history for context
+        if LLM_PROVIDER == "groq":
+            # Add JSON instruction for Groq
+            json_instruction = "\n\nIMPORTANT: Your response MUST be valid JSON format ONLY, without any explanations or text outside the JSON structure."
+            system_prompt = header_prompt + template_prompt + json_instruction
+        else:
+            system_prompt = header_prompt + template_prompt
+            
+        # Call API with message history
+        raw = provider.generate_json_with_history(system_prompt, message_history.messages)
         
-        # Extract JSON from response
-        clean = extract_json_from_response(raw)
+        # Convert the raw JSON to LLMReply
+        response = LLMReply.model_validate(raw)
         
-        # Parse the extracted JSON
-        return LLMReply.model_validate_json(clean)
+        # Add the assistant's response to history (as JSON string for consistency)
+        message_history.add_assistant_message(json.dumps(raw))
+        
+        return response
     except Exception as e:
-        logger.error(f"LLM error: {e}\nRaw output: {raw[:120] if 'raw' in locals() else 'No output'}")
+        logger.error(f"LLM error: {e}\nRaw output: {str(raw)[:120] if 'raw' in locals() else 'No output'}")
         return LLMReply(
             scheduling_problem=state or {},
             clarification_question="Sorry, I couldn't parse that. Could you rephrase?",

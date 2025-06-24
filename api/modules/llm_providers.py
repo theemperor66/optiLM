@@ -7,6 +7,8 @@ a factory function to create the appropriate provider based on configuration.
 import os
 import logging
 import abc
+import json
+import re
 from typing import Dict, Any, Optional, Type, List
 
 # Configure logging
@@ -54,6 +56,20 @@ class LLMProvider(abc.ABC):
             Dict[str, Any]: The parsed JSON response
         """
         pass
+        
+    @abc.abstractmethod
+    def generate_json_with_history(self, system_prompt: str, message_history: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Generate and parse JSON based on the given system prompt and conversation history.
+        
+        Args:
+            system_prompt: The system instructions/prompt
+            message_history: List of previous messages in format [{'role': 'user|assistant', 'content': 'message'}]
+            
+        Returns:
+            Dict[str, Any]: The parsed JSON response
+        """
+        pass
 
 class GeminiProvider(LLMProvider):
     """
@@ -64,6 +80,7 @@ class GeminiProvider(LLMProvider):
         self.api_key = os.getenv("GOOGLE_API_KEY")
         self.model = os.getenv("LLM_MODEL", "gemini-2.5-pro-exp-03-25")
         self.client = None
+        self.genai = None
     
     def initialize(self) -> bool:
         """
@@ -81,6 +98,7 @@ class GeminiProvider(LLMProvider):
             
             genai.configure(api_key=self.api_key)
             self.client = genai.GenerativeModel(self.model)
+            self.genai = genai
             
             logger.info("Gemini provider initialized successfully")
             logger.info(f"Using Gemini model: {self.model}")
@@ -131,24 +149,62 @@ class GeminiProvider(LLMProvider):
         import json
         import re
         
-        full_prompt = f"{prompt}\n\nUser query: {user_message}"
+        # Create a simple history with just this message
+        message_history = [
+            {"role": "user", "content": user_message}
+        ]
+        
+        # Use the history-based implementation
+        return self.generate_json_with_history(prompt, message_history)
+        
+    def generate_json_with_history(self, system_prompt: str, message_history: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Generate and parse JSON using the Gemini API with conversation history.
+        
+        Args:
+            system_prompt: The system instructions/prompt
+            message_history: List of previous messages in format [{'role': 'user|assistant', 'content': 'message'}]
+            
+        Returns:
+            Dict[str, Any]: The parsed JSON response
+        """
+        if not self.client or not self.genai:
+            if not self.initialize():
+                raise ValueError("Gemini provider not initialized")
         
         try:
-            response_text = self.generate_text(full_prompt)
+            # Convert to Gemini's format
+            history = []
+            
+            # Add system prompt as first user message if provided
+            # Note: Gemini doesn't support 'system' role, only 'user' and 'model'
+            if system_prompt:
+                history.append({"role": "user", "parts": [{"text": system_prompt}]})
+            
+            # Convert message history to Gemini format
+            for msg in message_history:
+                role = "user" if msg["role"] == "user" else "model"
+                history.append({"role": role, "parts": [{"text": msg["content"]}]})
+            
+            # Generate content with history
+            response = self.client.generate_content(history)
+            
+            if not hasattr(response, 'text') or not response.text:
+                raise ValueError("Invalid response format from Gemini API: missing text field")
             
             # Try to parse the response as JSON
             try:
-                parsed_response = json.loads(response_text)
+                parsed_response = json.loads(response.text)
                 return parsed_response
             except json.JSONDecodeError:
                 # If the response is not valid JSON, try to extract JSON from the text
-                json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
+                json_match = re.search(r'```json\s*(.*?)\s*```', response.text, re.DOTALL)
                 if json_match:
                     extracted_json = json_match.group(1)
                     parsed_response = json.loads(extracted_json)
                     return parsed_response
                 else:
-                    raise ValueError(f"Could not parse JSON from response: {response_text[:100]}...")
+                    raise ValueError(f"Could not parse JSON from response: {response.text[:100]}...")
         except Exception as e:
             logger.error(f"Error generating JSON with Gemini: {str(e)}")
             raise
@@ -162,6 +218,7 @@ class OpenAIProvider(LLMProvider):
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.model = os.getenv("OPENAI_MODEL", "gpt-4o")
         self.client = None
+        self.openai = None
     
     def initialize(self) -> bool:
         """
@@ -171,6 +228,7 @@ class OpenAIProvider(LLMProvider):
             bool: True if initialization was successful, False otherwise
         """
         try:
+            import openai
             from openai import OpenAI
             
             if not self.api_key:
@@ -178,6 +236,7 @@ class OpenAIProvider(LLMProvider):
                 return False
             
             self.client = OpenAI(api_key=self.api_key)
+            self.openai = openai
             
             logger.info("OpenAI provider initialized successfully")
             logger.info(f"Using OpenAI model: {self.model}")
@@ -254,6 +313,52 @@ class OpenAIProvider(LLMProvider):
         except Exception as e:
             logger.error(f"Error generating JSON with OpenAI: {str(e)}")
             raise
+    
+    def generate_json_with_history(self, system_prompt: str, message_history: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Generate and parse JSON using the OpenAI API with conversation history.
+        
+        Args:
+            system_prompt: The system prompt/instructions
+            message_history: List of previous messages in format [{'role': 'user|assistant', 'content': 'message'}]
+            
+        Returns:
+            Dict[str, Any]: The parsed JSON response
+        """
+        if not self.client:
+            if not self.initialize():
+                raise ValueError("OpenAI provider not initialized")
+
+        try:
+            # Format messages for OpenAI API
+            formatted_messages = []
+            
+            # Add system prompt as first message if provided
+            if system_prompt:
+                formatted_messages.append({"role": "system", "content": system_prompt})
+            
+            # Add message history
+            for msg in message_history:
+                role = msg["role"]
+                # OpenAI uses 'assistant' instead of 'model'
+                if role == "model":
+                    role = "assistant"
+                formatted_messages.append({"role": role, "content": msg["content"]})
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                response_format={"type": "json_object"},
+                messages=formatted_messages
+            )
+            
+            if not response.choices or not response.choices[0].message.content:
+                raise ValueError("Invalid response format from OpenAI API: missing content")
+            
+            content = response.choices[0].message.content
+            return json.loads(content)
+        except Exception as e:
+            logger.error(f"Error generating JSON with OpenAI: {str(e)}")
+            raise
 
 class AnthropicProvider(LLMProvider):
     """
@@ -264,6 +369,7 @@ class AnthropicProvider(LLMProvider):
         self.api_key = os.getenv("ANTHROPIC_API_KEY")
         self.model = os.getenv("ANTHROPIC_MODEL", "claude-3-opus-20240229")
         self.client = None
+        self.anthropic = None
     
     def initialize(self) -> bool:
         """
@@ -280,6 +386,7 @@ class AnthropicProvider(LLMProvider):
                 return False
             
             self.client = anthropic.Anthropic(api_key=self.api_key)
+            self.anthropic = anthropic
             
             logger.info("Anthropic provider initialized successfully")
             logger.info(f"Using Anthropic model: {self.model}")
@@ -341,9 +448,65 @@ class AnthropicProvider(LLMProvider):
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=4096,
                 system=prompt,
-                messages=[{"role": "user", "content": user_message}]
+                messages=[{"role": "user", "content": user_message}],
+                max_tokens=4096
+            )
+            
+            if not response.content or not response.content[0].text:
+                raise ValueError("Invalid response format from Anthropic API: missing content")
+            
+            content = response.content[0].text
+            
+            # Try to parse the response as JSON
+            try:
+                parsed_response = json.loads(content)
+                return parsed_response
+            except json.JSONDecodeError:
+                # If the response is not valid JSON, try to extract JSON from the text
+                json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+                if json_match:
+                    extracted_json = json_match.group(1)
+                    parsed_response = json.loads(extracted_json)
+                    return parsed_response
+                else:
+                    raise ValueError(f"Could not parse JSON from response: {content[:100]}...")
+        except Exception as e:
+            logger.error(f"Error generating JSON with Anthropic: {str(e)}")
+            raise
+    
+    def generate_json_with_history(self, system_prompt: str, message_history: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Generate and parse JSON using the Anthropic API with conversation history.
+        
+        Args:
+            system_prompt: The system prompt/instructions
+            message_history: List of previous messages in format [{'role': 'user|assistant', 'content': 'message'}]
+            
+        Returns:
+            Dict[str, Any]: The parsed JSON response
+        """
+        if not self.client:
+            if not self.initialize():
+                raise ValueError("Anthropic provider not initialized")
+        
+        try:
+            # Format messages for Anthropic API
+            formatted_messages = []
+            
+            # Add message history
+            for msg in message_history:
+                role = msg["role"]
+                # Anthropic uses 'assistant' instead of 'model'
+                if role == "model":
+                    role = "assistant"
+                formatted_messages.append({"role": role, "content": msg["content"]})
+            
+            response = self.client.messages.create(
+                model=self.model,
+                system=system_prompt,
+                messages=formatted_messages,
+                max_tokens=4096
             )
             
             if not response.content or not response.content[0].text:

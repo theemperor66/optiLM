@@ -8,17 +8,27 @@ API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 
 def call_chat_api(message: str,
                   context: Optional[Dict] = None,
+                  message_history: Optional[List[Dict[str, str]]] = None,
                   test_mode: bool = False,
                   timeout: float = 120.0) -> Optional[Dict]:
     """
-    Send *message* (and optional *context*) to the OWPy back-end.
+    Send *message* (and optional *context* and *message_history*) to the OWPy back-end.
 
-    Returns the parsed JSON on success, or *None* and shows an error
-    banner on failure.
+    Args:
+        message: The user message to send
+        context: Optional problem state context
+        message_history: Optional conversation history in the format [{'role': 'user|assistant', 'content': 'message'}]
+        test_mode: Whether to use test mode
+        timeout: API request timeout in seconds
+        
+    Returns:
+        The parsed JSON response on success, or *None* and shows an error banner on failure.
     """
     payload = {"message": message, "test_mode": test_mode}
     if context is not None:
         payload["context"] = context
+    if message_history is not None:
+        payload["message_history"] = message_history
 
     try:
         r = requests.post(f"{API_URL}/chat", json=payload, timeout=timeout)

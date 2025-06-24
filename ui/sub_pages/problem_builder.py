@@ -8,6 +8,7 @@ from modules.problem_io import (
     to_example_format,
     from_example_format,
 )
+from typing import List, Dict, Optional
 
 def show_problem_builder(test_mode: bool = False):
     st.title("Scheduling Problem Builder")
@@ -25,6 +26,9 @@ def show_problem_builder(test_mode: bool = False):
         },
     )
     ss.setdefault("current_solution", None)
+    
+    # Initialize message history for LLM conversation
+    ss.setdefault("message_history", [])
 
     # Sidebar utilities ----------------------------------------------------
     with st.sidebar:
@@ -33,6 +37,8 @@ def show_problem_builder(test_mode: bool = False):
             ss.current_problem = get_default_problem()
             ss.current_solution = None
             ss.builder_sync_key = ""
+            # Clear message history when resetting problem
+            ss.message_history = []
             st.rerun()
 
         st.download_button(
@@ -270,16 +276,55 @@ def show_problem_builder(test_mode: bool = False):
         )
         ss.current_problem = problem
 
-        if st.button("🚀 Solve problem"):
-            with st.spinner("Contacting solver…"):
-                reply = call_chat_api("Solve this scheduling problem",
-                                      context=problem, test_mode=test_mode)
-            if reply:
-                ss.solution = reply
-                ss.current_solution = reply
-                st.success("Solved!")
-            else:
-                st.error("Solver failed – see sidebar logs.")
+        # Chat interface for the problem solver
+        chat_container = st.container()
+        with chat_container:
+            if st.button("🚀 Solve problem", key="solve_button"):
+                # Add user message to history
+                user_msg = "Solve this scheduling problem"
+                ss.message_history.append({"role": "user", "content": user_msg})
+                
+                with st.spinner("Contacting solver…"):
+                    reply = call_chat_api(
+                        message=user_msg,
+                        context=problem, 
+                        message_history=ss.message_history,
+                        test_mode=test_mode
+                    )
+                    
+                if reply:
+                    # Add response to history
+                    ss.message_history.append({"role": "assistant", "content": json.dumps(reply)})
+                    ss.solution = reply
+                    ss.current_solution = reply
+                    st.success("Solved!")
+                else:
+                    st.error("Solver failed – see sidebar logs.")
+                    
+            # Add a way to clear conversation history
+            if st.button("🗑 Clear conversation history", key="clear_history"):
+                ss.message_history = []
+                st.success("Conversation history cleared")
+                
+            # Display message history if present
+            if ss.message_history:
+                st.subheader("Conversation History")
+                history_expander = st.expander("View history", expanded=False)
+                with history_expander:
+                    for i, msg in enumerate(ss.message_history):
+                        role = "You" if msg["role"] == "user" else "Assistant"
+                        content = msg["content"]
+                        # For assistant messages, try to parse from JSON
+                        if msg["role"] == "assistant":
+                            try:
+                                content_obj = json.loads(content)
+                                if isinstance(content_obj, dict) and "clarification_question" in content_obj:
+                                    content = content_obj["clarification_question"]
+                                else:
+                                    content = "[Response contains complex data]" 
+                            except json.JSONDecodeError:
+                                pass
+                        st.text(f"{role}: {content[:100]}" + ("..." if len(content) > 100 else ""))
 
     # -----------------------------------------------------------------------
     with col2:
